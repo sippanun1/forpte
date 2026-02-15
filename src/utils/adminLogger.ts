@@ -4,7 +4,7 @@ import { db } from '../firebase/firebase'
 
 interface LogAdminActionParams {
   user: User
-  action: 'add' | 'edit' | 'delete' | 'update' | 'confirm' | 'cancel'
+  action: 'add' | 'edit' | 'delete' | 'update' | 'confirm' | 'cancel' | 'acknowledge'
   type: 'equipment' | 'room' | 'borrow'
   itemName: string
   details: string

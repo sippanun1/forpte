@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { collection, getDocs, query, orderBy } from "firebase/firestore"
+import { collection, getDocs, query, orderBy, updateDoc, doc } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import Header from "../../components/Header"
 
@@ -14,14 +14,23 @@ interface RoomBookingRecord {
   startTime: string
   endTime: string
   purpose: string
-  status: "completed" | "cancelled" | "upcoming"
+  status: "completed" | "cancelled" | "pending" | "approved" | "returned"
   bookedAt: string
+  cancellationReason?: string
+  cancelledBy?: string
+  cancelledByType?: "admin" | "user"
+  cancelledAt?: string
+  roomCondition?: string
+  equipmentCondition?: string
+  returnNotes?: string
+  returnedAt?: string
+  pictures?: string[]
 }
 
 export default function RoomBookingHistory() {
   const navigate = useNavigate()
   const [searchTerm, setSearchTerm] = useState("")
-  const [filterStatus, setFilterStatus] = useState<"all" | "completed" | "cancelled" | "upcoming">("all")
+  const [filterStatus, setFilterStatus] = useState<"all" | "completed" | "cancelled" | "denied" | "pending" | "approved">("all")
   const [roomTypeFilter, setRoomTypeFilter] = useState<"all" | "ห้องเรียน" | "ห้องปฏิบัติการ" | "ห้องประชุม">("all")
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "week" | "month" | "custom">("all")
   const [customStartDate, setCustomStartDate] = useState("")
@@ -29,6 +38,11 @@ export default function RoomBookingHistory() {
   const [showFilters, setShowFilters] = useState(false)
   const [bookingHistory, setBookingHistory] = useState<RoomBookingRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [cancelModalOpen, setCancelModalOpen] = useState(false)
+  const [cancelModalBookingId, setCancelModalBookingId] = useState<string | null>(null)
+  const [cancellationReason, setCancellationReason] = useState("")
+  const [returnDetailsModalOpen, setReturnDetailsModalOpen] = useState(false)
+  const [selectedReturnBooking, setSelectedReturnBooking] = useState<RoomBookingRecord | null>(null)
 
   // Load booking history from Firebase
   useEffect(() => {
@@ -50,7 +64,16 @@ export default function RoomBookingHistory() {
             endTime: data.endTime || "",
             purpose: data.purpose || "",
             status: data.status || "upcoming",
-            bookedAt: data.bookedAt || ""
+            bookedAt: data.bookedAt || "",
+            cancellationReason: data.cancellationReason || "",
+            cancelledBy: data.cancelledBy || "",
+            cancelledByType: data.cancelledByType || "user",
+            cancelledAt: data.cancelledAt || "",
+            roomCondition: data.roomCondition || "",
+            equipmentCondition: data.equipmentCondition || "",
+            returnNotes: data.returnNotes || "",
+            returnedAt: data.returnedAt || "",
+            pictures: data.pictures || []
           })
         })
         setBookingHistory(records)
@@ -83,14 +106,128 @@ export default function RoomBookingHistory() {
     })
   }
 
-  const getStatusBadge = (status: RoomBookingRecord["status"]) => {
+  const getStatusBadge = (status: RoomBookingRecord["status"], cancelledByType?: "user" | "admin") => {
     switch (status) {
+      case "pending":
+        return { text: "รอยืนยัน", color: "bg-orange-500" }
+      case "approved":
+        return { text: "อนุมัติแล้ว", color: "bg-blue-500" }
       case "completed":
         return { text: "เสร็จสิ้น", color: "bg-green-500" }
       case "cancelled":
+        if (cancelledByType === "admin") {
+          return { text: "ปฏิเสธ", color: "bg-red-600" }
+        }
         return { text: "ยกเลิก", color: "bg-red-500" }
-      case "upcoming":
-        return { text: "รอใช้งาน", color: "bg-blue-500" }
+      case "returned":
+        return { text: "คืนห้องแล้ว", color: "bg-purple-500" }
+      default:
+        return { text: "ไม่ทราบ", color: "bg-gray-500" }
+    }
+  }
+
+  const handleApproveBooking = async (bookingId: string) => {
+    try {
+      await updateDoc(doc(db, "roomBookings", bookingId), {
+        status: "approved"
+      })
+      // Refresh the bookings list
+      const q = query(collection(db, "roomBookings"), orderBy("date", "desc"))
+      const querySnapshot = await getDocs(q)
+      const records: RoomBookingRecord[] = []
+      querySnapshot.forEach((doc) => {
+        const data = doc.data()
+        records.push({
+          id: doc.id,
+          roomCode: data.roomCode || "",
+          roomType: data.roomType || "",
+          userName: data.userName || "",
+          userId: data.userId || "",
+          date: data.date || "",
+          startTime: data.startTime || "",
+          endTime: data.endTime || "",
+          purpose: data.purpose || "",
+          status: data.status || "pending",
+          bookedAt: data.bookedAt || "",
+          cancellationReason: data.cancellationReason || "",
+          cancelledBy: data.cancelledBy || "",
+          cancelledByType: data.cancelledByType || "user",
+          cancelledAt: data.cancelledAt || "",
+          roomCondition: data.roomCondition || "",
+          equipmentCondition: data.equipmentCondition || "",
+          returnNotes: data.returnNotes || "",
+          returnedAt: data.returnedAt || "",
+          pictures: data.pictures || []
+        })
+      })
+      setBookingHistory(records)
+    } catch (error) {
+      console.error("Error approving booking:", error)
+      alert("เกิดข้อผิดพลาดในการอนุมัติการจอง")
+    }
+  }
+
+  const handleCancelBooking = (bookingId: string) => {
+    setCancelModalBookingId(bookingId)
+    setCancellationReason("")
+    setCancelModalOpen(true)
+  }
+
+  const handleViewReturnDetails = (booking: RoomBookingRecord) => {
+    setSelectedReturnBooking(booking)
+    setReturnDetailsModalOpen(true)
+  }
+
+  const handleConfirmCancel = async () => {
+    if (!cancelModalBookingId) return
+    if (!cancellationReason.trim()) {
+      alert("กรุณาระบุเหตุผลในการยกเลิก")
+      return
+    }
+    try {
+      await updateDoc(doc(db, "roomBookings", cancelModalBookingId), {
+        status: "cancelled",
+        cancellationReason: cancellationReason,
+        cancelledBy: "Admin",
+        cancelledByType: "admin",
+        cancelledAt: new Date().toISOString()
+      })
+      // Refresh the bookings list
+      const q = query(collection(db, "roomBookings"), orderBy("date", "desc"))
+      const querySnapshot = await getDocs(q)
+      const records: RoomBookingRecord[] = []
+      querySnapshot.forEach((doc) => {
+        const data = doc.data()
+        records.push({
+          id: doc.id,
+          roomCode: data.roomCode || "",
+          roomType: data.roomType || "",
+          userName: data.userName || "",
+          userId: data.userId || "",
+          date: data.date || "",
+          startTime: data.startTime || "",
+          endTime: data.endTime || "",
+          purpose: data.purpose || "",
+          status: data.status || "pending",
+          bookedAt: data.bookedAt || "",
+          cancellationReason: data.cancellationReason || "",
+          cancelledBy: data.cancelledBy || "",
+          cancelledByType: data.cancelledByType || "user",
+          cancelledAt: data.cancelledAt || "",
+          roomCondition: data.roomCondition || "",
+          equipmentCondition: data.equipmentCondition || "",
+          returnNotes: data.returnNotes || "",
+          returnedAt: data.returnedAt || "",
+          pictures: data.pictures || []
+        })
+      })
+      setBookingHistory(records)
+      setCancelModalOpen(false)
+      setCancelModalBookingId(null)
+      setCancellationReason("")
+    } catch (error) {
+      console.error("Error cancelling booking:", error)
+      alert("เกิดข้อผิดพลาดในการยกเลิกการจอง")
     }
   }
 
@@ -144,7 +281,13 @@ export default function RoomBookingHistory() {
         record.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
         record.purpose.toLowerCase().includes(searchTerm.toLowerCase())
       
-      const matchesStatus = filterStatus === "all" || record.status === filterStatus
+      const matchesStatus = (() => {
+        if (filterStatus === "all") return true
+        if (filterStatus === "denied") return record.status === "cancelled" && record.cancelledByType === "admin"
+        if (filterStatus === "cancelled") return record.status === "cancelled" && record.cancelledByType === "user"
+        return record.status === filterStatus
+      })()
+      
       const matchesRoomType = roomTypeFilter === "all" || record.roomType === roomTypeFilter
       const matchesDate = isWithinDateRange(record.date)
       
@@ -161,9 +304,19 @@ export default function RoomBookingHistory() {
           {/* Back Button */}
           <button
             onClick={() => navigate(-1)}
-            className="mt-4 mb-6 px-4 py-2 border border-gray-400 text-gray-600 text-sm rounded-lg hover:bg-gray-100 transition flex items-center gap-2"
+            className="                            
+              w-full
+              mb-4
+              py-2
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              flex items-center justify-center gap-2"
           >
-            ← ย้อนกลับ
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
           </button>
 
           {/* Search Bar */}
@@ -212,8 +365,10 @@ export default function RoomBookingHistory() {
                   <div className="flex gap-2 flex-wrap">
                     {[
                       { key: 'all', label: 'ทั้งหมด', color: 'gray' },
-                      { key: 'upcoming', label: 'รอใช้งาน', color: 'blue' },
+                      { key: 'pending', label: 'รอยืนยัน', color: 'orange' },
+                      { key: 'approved', label: 'อนุมัติแล้ว', color: 'blue' },
                       { key: 'completed', label: 'เสร็จสิ้น', color: 'green' },
+                      { key: 'denied', label: 'ปฏิเสธ', color: 'red' },
                       { key: 'cancelled', label: 'ยกเลิก', color: 'red' }
                     ].map((status) => (
                       <button
@@ -222,8 +377,10 @@ export default function RoomBookingHistory() {
                         className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${
                           filterStatus === status.key
                             ? status.color === 'gray' ? "bg-gray-700 text-white"
+                            : status.color === 'orange' ? "bg-orange-500 text-white"
                             : status.color === 'blue' ? "bg-blue-500 text-white"
                             : status.color === 'green' ? "bg-green-500 text-white"
+                            : status.key === 'denied' ? "bg-red-600 text-white"
                             : "bg-red-500 text-white"
                             : "border border-gray-300 text-gray-700 hover:border-gray-500"
                         }`}
@@ -330,7 +487,7 @@ export default function RoomBookingHistory() {
               </div>
             ) : filteredHistory.length > 0 ? (
               filteredHistory.map((record) => {
-                const statusBadge = getStatusBadge(record.status)
+                const statusBadge = getStatusBadge(record.status, record.cancelledByType)
                 return (
                   <div key={record.id} className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm">
                     {/* Header */}
@@ -365,9 +522,44 @@ export default function RoomBookingHistory() {
 
                     {/* Footer */}
                     <div className="mt-3 pt-2 border-t border-gray-100">
-                      <p className="text-[10px] text-gray-400">
+                      <p className="text-[10px] text-gray-400 mb-3">
                         จองเมื่อ: {formatBookedAt(record.bookedAt)}
                       </p>
+                      {/* Action Buttons for Pending Bookings */}
+                      {record.status === "pending" && (
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleApproveBooking(record.id)}
+                            className="flex-1 px-3 py-2 bg-green-500 text-white text-xs font-medium rounded-lg hover:bg-green-600 transition"
+                          >
+                            อนุมัติ
+                          </button>
+                          <button
+                            onClick={() => handleCancelBooking(record.id)}
+                            className="flex-1 px-3 py-2 bg-red-500 text-white text-xs font-medium rounded-lg hover:bg-red-600 transition"
+                          >
+                            ปฏิเสธ
+                          </button>
+                        </div>
+                      )}
+                      {/* Action Button for Returned Bookings */}
+                      {record.status === "returned" && (
+                        <button
+                          onClick={() => handleViewReturnDetails(record)}
+                          className="w-full px-3 py-2 bg-purple-500 text-white text-xs font-medium rounded-lg hover:bg-purple-600 transition"
+                        >
+                          ดูรายละเอียดการคืน
+                        </button>
+                      )}
+                      {/* Action Button for Cancelled Bookings */}
+                      {record.status === "cancelled" && (
+                        <button
+                          onClick={() => handleViewReturnDetails(record)}
+                          className="w-full px-3 py-2 bg-red-500 text-white text-xs font-medium rounded-lg hover:bg-red-600 transition"
+                        >
+                          {record.cancelledByType === "admin" ? "ดูรายละเอียดการปฏิเสธ" : "ดูรายละเอียดการยกเลิก"}
+                        </button>
+                      )}
                     </div>
                   </div>
                 )
@@ -381,6 +573,180 @@ export default function RoomBookingHistory() {
           </div>
         </div>
       </div>
+
+      {/* Cancellation Reason Modal */}
+      {cancelModalOpen && (
+        <div className="fixed inset-0 backdrop-blur-xs bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">ระบุเหตุผลการปฏิเสธ</h2>
+            
+            <textarea
+              value={cancellationReason}
+              onChange={(e) => setCancellationReason(e.target.value)}
+              placeholder="เหตุผลการยกเลิกการจอง..."
+              className="w-full h-24 p-3 border border-gray-300 rounded-lg text-sm focus:outline-none focus:border-orange-500 resize-none"
+            />
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => {
+                  setCancelModalOpen(false)
+                  setCancelModalBookingId(null)
+                  setCancellationReason("")
+                }}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-100 transition"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleConfirmCancel}
+                className="flex-1 px-4 py-2 bg-red-500 text-white font-medium rounded-lg hover:bg-red-600 transition"
+              >
+                ยืนยันการปฏิเสธ
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Return/Cancellation Details Modal */}
+      {returnDetailsModalOpen && selectedReturnBooking && (
+        <div className="fixed inset-0 backdrop-blur-xs bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full max-h-[80vh] overflow-y-auto">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">
+              {selectedReturnBooking.status === "cancelled" 
+                ? (selectedReturnBooking.cancelledByType === "admin" 
+                  ? "รายละเอียดการปฏิเสธ" 
+                  : "รายละเอียดการยกเลิก") 
+                : "รายละเอียดการคืนห้อง"}
+            </h2>
+            
+            {/* Room Info */}
+            <div className="mb-4 pb-4 border-b border-gray-200">
+              <p className="text-xs font-semibold text-gray-600 mb-2">ข้อมูลห้อง</p>
+              <p className="text-sm font-medium text-gray-800">{selectedReturnBooking.roomCode}</p>
+              <p className="text-xs text-gray-600">{selectedReturnBooking.roomType}</p>
+            </div>
+
+            {/* Cancellation Details */}
+            {selectedReturnBooking.status === "cancelled" && selectedReturnBooking.cancellationReason && (
+              <>
+                <div className="mb-4 pb-4 border-b border-gray-200">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">
+                    {selectedReturnBooking.cancelledByType === "admin" ? "เหตุผลการปฏิเสธ" : "เหตุผลการยกเลิก"}
+                  </p>
+                  <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                    <p className="text-sm text-gray-800">{selectedReturnBooking.cancellationReason}</p>
+                  </div>
+                </div>
+                {selectedReturnBooking.cancelledBy && (
+                  <div className="mb-4 pb-4 border-b border-gray-200">
+                    <p className="text-xs font-semibold text-gray-600 mb-2">
+                      {selectedReturnBooking.cancelledByType === "admin" ? "ปฏิเสธโดย" : "ยกเลิกโดย"}
+                    </p>
+                    <p className="text-sm text-gray-800">{selectedReturnBooking.cancelledBy}</p>
+                  </div>
+                )}
+                {selectedReturnBooking.cancelledAt && (
+                  <div className="mb-4 pb-4 border-b border-gray-200">
+                    <p className="text-xs font-semibold text-gray-600 mb-2">
+                      {selectedReturnBooking.cancelledByType === "admin" ? "ปฏิเสธเมื่อ" : "ยกเลิกเมื่อ"}
+                    </p>
+                    <p className="text-sm text-gray-800">
+                      {new Date(selectedReturnBooking.cancelledAt).toLocaleDateString('th-TH', { 
+                        day: 'numeric', 
+                        month: 'short',
+                        year: 'numeric'
+                      })} {new Date(selectedReturnBooking.cancelledAt).toLocaleTimeString('th-TH')}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Return Date (for returned bookings) */}
+            {selectedReturnBooking.status === "returned" && selectedReturnBooking.returnedAt && (
+              <div className="mb-4 pb-4 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 mb-2">วันเวลาคืนห้อง</p>
+                <p className="text-sm text-gray-800">
+                  {new Date(selectedReturnBooking.returnedAt).toLocaleDateString('th-TH', { 
+                    day: 'numeric', 
+                    month: 'short',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </p>
+              </div>
+            )}
+
+            {/* Room Condition */}
+            {selectedReturnBooking.roomCondition && (
+              <div className="mb-4 pb-4 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 mb-2">สภาพห้อง</p>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-sm text-gray-800">
+                    {selectedReturnBooking.roomCondition === "normal" 
+                      ? "ปกติ" 
+                      : selectedReturnBooking.roomCondition === "needCleaning" 
+                      ? "ต้องทำความสะอาด" 
+                      : "มีของชำรุด"}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Equipment Condition */}
+            {selectedReturnBooking.equipmentCondition && (
+              <div className="mb-4 pb-4 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 mb-2">สภาพอุปกรณ์</p>
+                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <p className="text-sm text-gray-800">
+                    {selectedReturnBooking.equipmentCondition === "working" 
+                      ? "ใช้งานได้" 
+                      : "มีปัญหา"}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Return Notes */}
+            {selectedReturnBooking.returnNotes && (
+              <div className="mb-4 pb-4 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 mb-2">หมายเหตุ</p>
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <p className="text-sm text-gray-800">{selectedReturnBooking.returnNotes}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Return Pictures */}
+            {selectedReturnBooking.pictures && selectedReturnBooking.pictures.length > 0 && (
+              <div className="mb-4 pb-4 border-b border-gray-200">
+                <p className="text-xs font-semibold text-gray-600 mb-3">รูปภาพการคืน</p>
+                <div className="grid grid-cols-3 gap-2">
+                  {selectedReturnBooking.pictures.map((picture, index) => (
+                    <div key={index} className="relative w-full aspect-square rounded-lg overflow-hidden border border-gray-200">
+                      <img src={picture} alt={`return-${index}`} className="w-full h-full object-cover" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Close Button */}
+            <button
+              onClick={() => {
+                setReturnDetailsModalOpen(false)
+                setSelectedReturnBooking(null)
+              }}
+              className="w-full px-4 py-2 bg-gray-500 text-white font-medium rounded-lg hover:bg-gray-600 transition"
+            >
+              ปิด
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

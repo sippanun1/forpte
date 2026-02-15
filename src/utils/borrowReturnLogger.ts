@@ -1,4 +1,4 @@
-import { doc, setDoc, collection, getDoc, updateDoc } from "firebase/firestore"
+import { doc, setDoc, collection, getDoc, updateDoc, query, where, getDocs, writeBatch } from "firebase/firestore"
 import { db } from "../firebase/firebase"
 import type { User } from "firebase/auth"
 
@@ -12,6 +12,8 @@ export interface BorrowItem {
   returnCondition?: string // ปกติ, ชำรุด, สูญหาย (for assets only)
   returnNotes?: string // For lost items or consumable notes
   consumptionStatus?: string // ใช้จนหมด, ใช้บางส่วน, ไม่ได้ใช้ (for consumables only)
+  assetCodes?: string[] // Equipment/asset codes for tracking specific items
+  assetCodeConditions?: { code: string; condition: "ปกติ" | "ชำรุด" | "สูญหาย"; notes?: string }[] // Individual code conditions with notes
   // Asset return breakdown
   returnGoodQty?: number
   returnDamagedQty?: number
@@ -37,13 +39,13 @@ export interface BorrowTransaction {
   damagesAndIssues?: string
   returnedBy?: string // User who initiated return
   returnedByEmail?: string
-  status: "scheduled" | "borrowed" | "pending_return" | "returned" | "cancelled"
+  status: "borrowed" | "pending_return" | "returned" | "cancelled"
   notes?: string
   timestamp: number
-  // Confirmation fields (when admin gives equipment)
-  confirmedBy?: string
-  confirmedByEmail?: string
-  confirmedAt?: number
+  // Admin acknowledgment fields (when admin acknowledges receipt)
+  acknowledgedBy?: string
+  acknowledgedByEmail?: string
+  acknowledgedAt?: number
   // Return approval fields (when admin approves return)
   approvedBy?: string
   approvedByEmail?: string
@@ -89,7 +91,7 @@ export async function logBorrowTransaction(
       expectedReturnDate,
       expectedReturnTime: expectedReturnTime || "",
       conditionBeforeBorrow,
-      status: "scheduled", // Waiting for admin to confirm and give equipment
+      status: "borrowed", // Item is borrowed immediately
       notes: notes || "",
       timestamp: Date.now()
     }
@@ -97,8 +99,14 @@ export async function logBorrowTransaction(
     // Store in borrowHistory collection
     await setDoc(doc(collection(db, "borrowHistory"), borrowId), transaction)
     
-    // Decrease equipment quantity when equipment is borrowed
-    // This happens when status changes from "scheduled" to "borrowed" via confirmBorrowTransaction
+    // Mark asset codes as unavailable
+    // With the new structure (Option A), each serial code is its own document
+    for (const item of equipmentItems) {
+      if (item.assetCodes && item.assetCodes.length > 0) {
+        // Mark each serial code document as unavailable
+        await markAssetCodesUnavailable(item.assetCodes)
+      }
+    }
     
     return borrowId
   } catch (error) {
@@ -108,51 +116,52 @@ export async function logBorrowTransaction(
 }
 
 /**
- * Decrease equipment quantity when borrow is confirmed
+ * Mark specific asset codes as unavailable (borrowed)
+ * NEW STRUCTURE (Option A): Each serial code is its own document
  */
-async function decreaseEquipmentQuantity(equipmentId: string, quantityToDecrement: number) {
+async function markAssetCodesUnavailable(assetCodes: string[]) {
   try {
-    console.log(`[DEBUG] Decreasing equipment ${equipmentId} by ${quantityToDecrement}`)
-    const equipmentRef = doc(db, "equipment", equipmentId)
-    const equipmentDoc = await getDoc(equipmentRef)
+    // With new structure, we need to find the documents matching these serial codes
+    // The document ID format is: {equipmentId}-{serialCode}
+    // For now, we'll search for documents with these serial codes
     
-    if (equipmentDoc.exists()) {
-      const currentQuantity = equipmentDoc.data().quantity || 0
-      const newQuantity = Math.max(0, currentQuantity - quantityToDecrement)
-      console.log(`[DEBUG] Current: ${currentQuantity}, New: ${newQuantity}`)
+    for (const code of assetCodes) {
+      // Find all documents with this serialCode and set available: false
+      const querySnapshot = await getDocs(
+        query(collection(db, "equipment"), where("serialCode", "==", code))
+      )
       
-      await updateDoc(equipmentRef, {
-        quantity: newQuantity
-      })
-      console.log(`[DEBUG] Successfully updated equipment ${equipmentId}`)
-    } else {
-      console.warn(`[DEBUG] Equipment ${equipmentId} not found in database`)
+      for (const doc of querySnapshot.docs) {
+        await updateDoc(doc.ref, { available: false })
+      }
     }
   } catch (error) {
-    console.error(`Error decreasing quantity for equipment ${equipmentId}:`, error)
+    console.error(`Error marking asset codes unavailable:`, error)
   }
 }
 
 /**
- * Increase equipment quantity when asset is returned in normal condition
+ * Mark specific asset codes as available (returned and approved)
+ * NEW STRUCTURE (Option A): Each serial code is its own document
  */
-async function increaseEquipmentQuantity(equipmentId: string, quantityToIncrement: number) {
+async function markAssetCodesAvailable(_equipmentId: string, assetCodes: string[]) {
   try {
-    const equipmentRef = doc(db, "equipment", equipmentId)
-    const equipmentDoc = await getDoc(equipmentRef)
-    
-    if (equipmentDoc.exists()) {
-      const currentQuantity = equipmentDoc.data().quantity || 0
-      const newQuantity = currentQuantity + quantityToIncrement
+    // With new structure, find documents with these serial codes and set available: true
+    for (const code of assetCodes) {
+      const querySnapshot = await getDocs(
+        query(collection(db, "equipment"), where("serialCode", "==", code))
+      )
       
-      await updateDoc(equipmentRef, {
-        quantity: newQuantity
-      })
+      for (const doc of querySnapshot.docs) {
+        await updateDoc(doc.ref, { available: true })
+      }
     }
   } catch (error) {
-    console.error(`Error increasing quantity for equipment ${equipmentId}:`, error)
+    console.error(`Error marking asset codes available:`, error)
   }
 }
+
+
 
 /**
  * Log equipment return transaction to Firestore
@@ -213,6 +222,10 @@ export async function logReturnTransaction(
           if (returnedItem.returnLostQty !== undefined) {
             updatedItem.returnLostQty = returnedItem.returnLostQty
           }
+          // Asset code conditions - IMPORTANT: Save per-code conditions
+          if (returnedItem.assetCodeConditions && returnedItem.assetCodeConditions.length > 0) {
+            updatedItem.assetCodeConditions = returnedItem.assetCodeConditions
+          }
           return updatedItem
         }
         return originalItem
@@ -220,15 +233,34 @@ export async function logReturnTransaction(
     }
 
     // Update equipment quantities based on return condition and equipment type
-    // Only increase quantity for assets returned in normal condition
+    // For consumables: add returned quantity back to inventory
     if (returnedEquipmentItems && returnedEquipmentItems.length > 0) {
+      const batch = writeBatch(db)
+      
       for (const item of returnedEquipmentItems) {
-        // If it's an asset and returned in normal condition, increase quantity back
-        if (item.equipmentCategory === "asset" && item.returnCondition === "ปกติ") {
-          await increaseEquipmentQuantity(item.equipmentId, item.quantityBorrowed)
+        // Only update quantities for consumables
+        if (item.equipmentCategory === "consumable" && item.quantityReturned !== undefined && item.quantityReturned > 0) {
+          try {
+            // Find equipment by name
+            const q = query(collection(db, "equipment"), where("name", "==", item.equipmentName))
+            const snapshot = await getDocs(q)
+            
+            snapshot.forEach((docSnap) => {
+              const currentQty = docSnap.data().quantity || 0
+              const newQty = currentQty + item.quantityReturned
+              
+              batch.update(doc(db, "equipment", docSnap.id), {
+                quantity: newQty,
+                available: newQty > 0
+              })
+            })
+          } catch (error) {
+            console.error(`Error updating quantity for ${item.equipmentName}:`, error)
+          }
         }
-        // For consumables or broken/lost items: quantity stays decreased (already removed from inventory)
       }
+      
+      await batch.commit()
     }
 
     // Update borrow transaction with return information
@@ -263,14 +295,13 @@ export async function logReturnTransaction(
 }
 
 /**
- * Admin confirms and gives equipment to user
- * Changes status from "scheduled" to "borrowed"
+ * Admin acknowledges receiving the borrow request
+ * Records acknowledgment without changing status
  */
-export async function confirmBorrowTransaction(
+export async function acknowledgeAdminReceivedBorrow(
   borrowId: string,
-  confirmedBy: User,
-  confirmedByName?: string,
-  notes?: string
+  acknowledgedBy: User,
+  acknowledgedByName?: string
 ) {
   try {
     const borrowDocRef = doc(db, "borrowHistory", borrowId)
@@ -281,36 +312,37 @@ export async function confirmBorrowTransaction(
     }
 
     const currentData = borrowDoc.data() as BorrowTransaction
-    if (currentData.status !== "scheduled") {
-      throw new Error(`Transaction is not in scheduled status. Current status: ${currentData.status}`)
+    if (currentData.status !== "borrowed") {
+      throw new Error(`Transaction is not in borrowed status. Current status: ${currentData.status}`)
     }
 
-    // Decrease equipment quantities when confirming borrow
-    for (const item of currentData.equipmentItems) {
-      await decreaseEquipmentQuantity(item.equipmentId, item.quantityBorrowed)
-    }
-
-    // Update status to borrowed
-    const confirmData: Partial<BorrowTransaction> = {
-      status: "borrowed",
-      confirmedBy: confirmedByName || confirmedBy?.displayName || "Admin",
-      confirmedAt: Date.now()
+    // Record admin acknowledgment
+    const acknowledgeData: Partial<BorrowTransaction> = {
+      acknowledgedBy: acknowledgedByName || acknowledgedBy?.displayName || "Admin",
+      acknowledgedAt: Date.now()
     }
     
-    if (confirmedBy?.email) {
-      confirmData.confirmedByEmail = confirmedBy.email
-    }
-    if (notes) {
-      confirmData.notes = notes
-    } else if (currentData.notes) {
-      confirmData.notes = currentData.notes
+    if (acknowledgedBy?.email) {
+      acknowledgeData.acknowledgedByEmail = acknowledgedBy.email
     }
 
-    await setDoc(borrowDocRef, confirmData, { merge: true })
+    await setDoc(borrowDocRef, acknowledgeData, { merge: true })
   } catch (error) {
-    console.error("Error confirming borrow transaction:", error)
+    console.error("Error acknowledging borrow transaction:", error)
     throw error
   }
+}
+
+/**
+ * Keep confirmBorrowTransaction for backwards compatibility
+ * @deprecated Use acknowledgeAdminReceivedBorrow instead
+ */
+export async function confirmBorrowTransaction(
+  borrowId: string,
+  confirmedBy: User,
+  confirmedByName?: string
+) {
+  return acknowledgeAdminReceivedBorrow(borrowId, confirmedBy, confirmedByName)
 }
 
 /**
@@ -377,11 +409,18 @@ export async function approveReturnTransaction(
     // Update quantities for items and set status to returned
     if (currentData.equipmentItems && currentData.equipmentItems.length > 0) {
       for (const item of currentData.equipmentItems) {
-        // If it's an asset and returned in normal condition, increase quantity back (if not already done)
-        if (item.equipmentCategory === "asset" && item.returnCondition === "ปกติ") {
-          await increaseEquipmentQuantity(item.equipmentId, item.quantityBorrowed)
+        if (item.equipmentCategory === "asset") {
+          // If we have per-code conditions, mark only normal codes as available
+          if (item.assetCodeConditions && item.assetCodeConditions.length > 0) {
+            const normalCodes = item.assetCodeConditions
+              .filter(c => c.condition === "ปกติ")
+              .map(c => c.code)
+            if (normalCodes.length > 0) {
+              await markAssetCodesAvailable(item.equipmentId, normalCodes)
+            }
+          }
         }
-        // For consumables or broken/lost items: quantity stays decreased
+        // For consumables or broken/lost items: no action needed
       }
     }
 

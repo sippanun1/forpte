@@ -182,9 +182,10 @@ export default function BorrowReturnHistory() {
               hover:bg-gray-100
               transition
               mb-6
+              flex items-center justify-center gap-2
             "
           >
-            ย้อนกลับ
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
           </button>
 
           {/* Search Bar */}
@@ -397,12 +398,26 @@ export default function BorrowReturnHistory() {
                       
                       <div className="text-sm text-gray-600 mb-2">
                         {txn.equipmentItems.map((item, idx) => (
-                          <div key={idx}>
-                            {item.equipmentName} (
-                            {item.quantityReturned !== undefined && item.quantityReturned !== item.quantityBorrowed 
-                              ? `ยืม ${item.quantityBorrowed} / คืน ${item.quantityReturned}` 
-                              : `${item.quantityBorrowed}`
-                            } ชิ้น)
+                          <div key={idx} className="mb-1">
+                            <div>
+                              {item.equipmentName} (
+                              {item.quantityReturned !== undefined && item.quantityReturned !== item.quantityBorrowed 
+                                ? `ยืม ${item.quantityBorrowed} / คืน ${item.quantityReturned}` 
+                                : `${item.quantityBorrowed}`
+                              } ชิ้น)
+                            </div>
+                            {item.assetCodes && item.assetCodes.length > 0 && (
+                              <div className="flex flex-wrap gap-0.5 mt-1">
+                                {item.assetCodes.map((code, codeIdx) => (
+                                  <span
+                                    key={codeIdx}
+                                    className="inline-block bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded text-[10px] font-medium"
+                                  >
+                                    {code}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -478,6 +493,22 @@ export default function BorrowReturnHistory() {
                               </>
                             )}
                           </div>
+                          {/* Asset Codes */}
+                          {item.assetCodes && item.assetCodes.length > 0 && (
+                            <div className="mt-2 pt-2 border-t border-gray-300">
+                              <p className="text-xs font-semibold text-gray-700 mb-1">รหัสอุปกรณ์:</p>
+                              <div className="flex flex-wrap gap-1">
+                                {item.assetCodes.map((code, codeIdx) => (
+                                  <span
+                                    key={codeIdx}
+                                    className="inline-block bg-blue-100 text-blue-800 px-2 py-1 rounded text-xs font-medium"
+                                  >
+                                    {code}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                       {/* Show return condition if available */}
@@ -579,15 +610,15 @@ export default function BorrowReturnHistory() {
                 </div>
               </div>
 
-              {/* Confirmation info */}
-              {(detailsModal.confirmedBy || detailsModal.returnedBy) && (
+              {/* Acknowledgement and return info */}
+              {(detailsModal.acknowledgedBy || detailsModal.returnedBy) && (
                 <div className="border-t pt-4">
-                  <h3 className="font-semibold text-gray-900 mb-3 text-lg">ข้อมูลการยืนยันและการคืน</h3>
+                  <h3 className="font-semibold text-gray-900 mb-3 text-lg">ข้อมูลการรับทราบและการคืน</h3>
                   <div className="text-sm space-y-2">
-                    {detailsModal.confirmedBy && (
+                    {detailsModal.acknowledgedBy && (
                       <div>
-                        <span className="text-gray-600">ยืนยันโดย:</span>
-                        <p className="font-medium text-gray-900">{detailsModal.confirmedBy}</p>
+                        <span className="text-gray-600">รับทราบโดย:</span>
+                        <p className="font-medium text-gray-900">{detailsModal.acknowledgedBy}</p>
                       </div>
                     )}
                     {detailsModal.returnedBy && (

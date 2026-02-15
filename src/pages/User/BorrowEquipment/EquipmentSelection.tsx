@@ -5,7 +5,6 @@ import { db } from "../../../firebase/firebase"
 import { useAuth } from "../../../hooks/useAuth"
 import shoppingCartIcon from "../../../assets/shoppingcart.svg"
 import type { SelectedEquipment } from "../../../App"
-import type { BorrowTransaction } from "../../../utils/borrowReturnLogger"
 
 // Default equipment types with subtypes
 const defaultEquipmentTypes: { [key: string]: string[] } = {
@@ -28,6 +27,7 @@ interface Equipment {
   picture?: string
   inStock: boolean
   available: number
+  serialCode?: string
   equipmentType?: string
   equipmentSubType?: string
 }
@@ -93,45 +93,34 @@ export default function EquipmentSelection({ setCartItems }: EquipmentSelectionP
         })
         setEquipmentTypes(customTypes)
 
-        // Load all equipment
+        // Load all equipment where available: true
+        // With new structure (Option A), each serial code is its own document
+        // For consumables: available field must be true AND quantity > 0
         const querySnapshot = await getDocs(collection(db, "equipment"))
         const rawList: Equipment[] = []
         querySnapshot.forEach((doc) => {
           const data = doc.data()
-          rawList.push({
-            id: doc.id,
-            name: data.name,
-            category: data.category,
-            quantity: data.quantity || 0,
-            unit: data.unit || "ชิ้น",
-            picture: data.picture,
-            inStock: (data.quantity || 0) > 0,
-            available: data.quantity || 0,
-            equipmentType: data.equipmentType || "",
-            equipmentSubType: data.equipmentSubType || ""
-          })
+          // Only include documents where available is true (only available items can be borrowed)
+          // For consumables with quantity field, also check quantity > 0
+          const isAvailable = data.available === true || (data.category === "consumable" && data.quantity > 0)
+          if (isAvailable) {
+            rawList.push({
+              id: doc.id,
+              name: data.name,
+              category: data.category,
+              quantity: data.category === "consumable" ? (data.quantity || 0) : 1, // For consumables, use actual quantity; for assets, 1 per serial code
+              unit: data.unit || "ชิ้น",
+              picture: data.picture,
+              inStock: true, // If available: true and loaded, it's in stock
+              available: 1, // One unit available
+              serialCode: data.serialCode,
+              equipmentType: data.equipmentType || "",
+              equipmentSubType: data.equipmentSubType || ""
+            })
+          }
         })
         
-        // Get borrow history to calculate broken/lost items
-        const borrowHistorySnapshot = await getDocs(collection(db, "borrowHistory"))
-        const brokenLostByEquipment = new Map<string, number>()
-        
-        borrowHistorySnapshot.forEach((doc) => {
-          const txn = doc.data() as BorrowTransaction
-          
-          txn.equipmentItems?.forEach((item) => {
-            // Count returned items as broken or lost (exclude from available)
-            if (txn.status === "returned" && (item.returnCondition === "ชำรุด" || item.returnCondition === "สูญหาย")) {
-              const equipmentId = item.equipmentId || ""
-              brokenLostByEquipment.set(
-                equipmentId,
-                (brokenLostByEquipment.get(equipmentId) || 0) + item.quantityBorrowed
-              )
-            }
-          })
-        })
-        
-        // Group equipment by name
+        // Group equipment by name for display (multiple serial codes of same equipment)
         const grouped: { [key: string]: Equipment[] } = {}
         rawList.forEach((item) => {
           if (!grouped[item.name]) {
@@ -140,22 +129,20 @@ export default function EquipmentSelection({ setCartItems }: EquipmentSelectionP
           grouped[item.name].push(item)
         })
         
-        // Merge items with same name and calculate actual available quantity
+        // Create display list grouping same equipment together
         const mergedList: Equipment[] = Object.entries(grouped).map(([_name, items]) => {
-          const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0)
           const firstItem = items[0]
-          const equipmentId = firstItem.id
           
-          // The Firebase quantity field already has borrowed items subtracted
-          // Only subtract broken/lost items
-          const brokenLost = brokenLostByEquipment.get(equipmentId) || 0
-          const availableQuantity = Math.max(0, totalQuantity - brokenLost)
+          // For assets: count available serial codes; For consumables: use quantity field
+          const availableCount = firstItem.category === "consumable" 
+            ? (firstItem.quantity || 0)  // Use quantity field for consumables
+            : items.length  // Count serial codes for assets
           
           return {
             ...firstItem,
-            quantity: totalQuantity,
-            available: availableQuantity,
-            inStock: availableQuantity > 0
+            quantity: availableCount,
+            available: availableCount,
+            inStock: availableCount > 0
           }
         })
         
@@ -304,6 +291,25 @@ export default function EquipmentSelection({ setCartItems }: EquipmentSelectionP
       {/* ===== CONTENT ===== */}
       <div className="mt-6 flex justify-center">
         <div className="w-full max-w-[360px] px-4 flex flex-col items-center">
+          {/* Back Button */}
+          <button
+            onClick={() => navigate(-1)}
+            className="
+              w-full
+              py-3
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              mb-6
+              flex items-center justify-center gap-2
+            "
+          >
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
+          </button>
+
           {/* Date & Time */}
           <div className="w-full flex justify-between text-gray-600 text-xs mb-4">
             <div>{user?.displayName || user?.email || "User"}</div>
@@ -710,23 +716,6 @@ export default function EquipmentSelection({ setCartItems }: EquipmentSelectionP
           >
             <img src={shoppingCartIcon} alt="" className="w-5 h-5" />
             <span>ตะกร้าอุปกรณ์ ({totalItems} ชิ้น)</span>
-          </button>
-
-          {/* Back Button */}
-          <button
-            onClick={() => navigate(-1)}
-            className="
-              px-8 py-2
-              rounded-full
-              border border-gray-400
-              text-sm text-gray-600
-              font-medium
-              hover:bg-gray-100
-              transition
-              mb-6
-            "
-          >
-            ย้อนกลับ
           </button>
         </div>
       </div>

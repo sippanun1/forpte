@@ -171,7 +171,7 @@ export default function Register() {
             <input
               type="email"
               name="email"
-              placeholder="Email มอ"
+              placeholder="Email"
               value={form.email}
               onChange={handleChange}
               disabled={loading}

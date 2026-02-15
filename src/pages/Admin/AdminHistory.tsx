@@ -155,9 +155,18 @@ export default function AdminHistory() {
         <div className="w-full max-w-4xl mx-auto mb-6">
           <button
             onClick={() => navigate(-1)}
-            className="px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-full text-sm font-semibold transition"
+            className="              w-full
+              py-3
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              mb-6
+              flex items-center justify-center gap-2"
           >
-            ← ย้อนกลับ
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
           </button>
         </div>
       </div>

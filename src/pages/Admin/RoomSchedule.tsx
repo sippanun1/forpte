@@ -55,7 +55,10 @@ export default function RoomSchedule() {
         bookingsSnapshot.forEach((doc) => {
           const data = doc.data()
           // Filter by roomCode matching room.code or roomId matching roomId
-          if (data.roomCode === roomDoc.data()?.code || data.roomId === roomId) {
+          // AND exclude cancelled/completed bookings
+          if ((data.roomCode === roomDoc.data()?.code || data.roomId === roomId) && 
+              data.status !== "cancelled" && 
+              data.status !== "returned") {
             roomBookings.push({
               id: doc.id,
               roomId: data.roomId || roomId || "",
@@ -148,9 +151,19 @@ export default function RoomSchedule() {
           <p className="text-gray-500">ไม่พบข้อมูลห้อง</p>
           <button
             onClick={() => navigate(-1)}
-            className="px-6 py-2 border border-gray-400 text-gray-600 rounded-lg hover:bg-gray-100 transition"
+            className="
+              w-full
+              mb-4
+              py-2
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              flex items-center justify-center gap-2"
           >
-            ย้อนกลับ
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
           </button>
         </div>
       </div>
@@ -166,9 +179,18 @@ export default function RoomSchedule() {
           {/* Back Button */}
           <button
             onClick={() => navigate(-1)}
-            className="mt-4 mb-6 px-4 py-2 border border-gray-400 text-gray-600 text-sm rounded-lg hover:bg-gray-100 transition flex items-center gap-2"
+            className="              w-full
+              mb-4
+              py-2
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              flex items-center justify-center gap-2"
           >
-            ← ย้อนกลับ
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
           </button>
 
           {/* Room Info Card */}

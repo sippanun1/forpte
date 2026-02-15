@@ -1,5 +1,7 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { useState } from 'react'
+import { doc, updateDoc } from 'firebase/firestore'
+import { db } from './firebase/firebase'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Home from './pages/Home'
@@ -39,6 +41,8 @@ export interface Equipment {
   picture?: string
   inStock: boolean
   available: number
+  code?: string
+  serialCode?: string
   equipmentType?: string
   equipmentSubType?: string
 }
@@ -70,12 +74,19 @@ export interface ReturnEquipmentItem {
   returnGoodQty?: number
   returnDamagedQty?: number
   returnLostQty?: number
+  // Asset codes with conditions
+  assetCodes?: string[]
+  assetCodeConditions?: { code: string; condition: "ปกติ" | "ชำรุด" | "สูญหาย"; notes?: string }[]
 }
 
 export interface BookingData {
   room: string
   roomImage: string
   time: string
+  selectedDate?: string
+  availableSlots?: Array<{ time: string; available: boolean }>
+  usageDays?: Record<string, boolean>
+  timeRanges?: Record<string, { start: string; end: string }>
 }
 
 export interface ReturnBookingData {
@@ -93,6 +104,32 @@ function App() {
   const [returnEquipment, setReturnEquipment] = useState<ReturnEquipmentItem[]>([])
   const [bookingData, setBookingData] = useState<BookingData | null>(null)
   const [returnBookingData, setReturnBookingData] = useState<ReturnBookingData | null>(null)
+
+  const handleConfirmReturn = async (returnData: {
+    bookingId: string
+    roomCondition: string
+    equipmentCondition: string
+    furniture: string[]
+    notes: string
+    pictures: string[]
+  }) => {
+    try {
+      // Update the booking status to "returned" and save return details
+      const bookingRef = doc(db, "roomBookings", returnData.bookingId)
+      await updateDoc(bookingRef, {
+        status: "returned",
+        roomCondition: returnData.roomCondition,
+        equipmentCondition: returnData.equipmentCondition,
+        returnNotes: returnData.notes,
+        returnedAt: new Date().toISOString(),
+        pictures: returnData.pictures
+      })
+      console.log("Room return confirmed:", returnData)
+    } catch (error) {
+      console.error("Error confirming return:", error)
+      alert("เกิดข้อผิดพลาดในการคืนห้อง")
+    }
+  }
 
   return (
     <Router>
@@ -115,7 +152,7 @@ function App() {
         <Route path="/room-booking/availability" element={<ProtectedRoute element={<RoomAvailability setBookingData={setBookingData} />} />} />
         <Route path="/room-booking/form" element={<ProtectedRoute element={bookingData ? <RoomBookingForm bookingData={bookingData} onConfirmBooking={(confirmData) => console.log('Booking confirmed:', confirmData)} /> : <Navigate to="/room-booking" />} />} />
         <Route path="/room-booking/my-bookings" element={<ProtectedRoute element={<MyRoomBookings setReturnBookingData={setReturnBookingData} />} />} />
-        <Route path="/room-booking/return" element={<ProtectedRoute element={returnBookingData ? <ReturnRoomForm booking={returnBookingData} onConfirmReturn={(returnData) => console.log('Return confirmed:', returnData)} /> : <Navigate to="/room-booking/my-bookings" />} />} />
+        <Route path="/room-booking/return" element={<ProtectedRoute element={returnBookingData ? <ReturnRoomForm booking={returnBookingData} onConfirmReturn={handleConfirmReturn} /> : <Navigate to="/room-booking/my-bookings" />} />} />
         <Route path="/admin" element={<ProtectedRoute element={<AdminDashboard />} requiredRole="admin" />} />
         <Route path="/admin/dashboard" element={<ProtectedRoute element={<AdminDashboard />} requiredRole="admin" />} />
         <Route path="/admin/equipment-condition" element={<ProtectedRoute element={<EquipmentConditionReport />} requiredRole="admin" />} />

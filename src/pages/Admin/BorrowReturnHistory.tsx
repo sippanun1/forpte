@@ -1,16 +1,12 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import Header from "../../components/Header"
-import { collection, getDocs, query, orderBy, doc, getDoc } from "firebase/firestore"
+import { collection, getDocs, query, orderBy } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import { useAuth } from "../../hooks/useAuth"
 import { logAdminAction } from "../../utils/adminLogger"
 import type { BorrowTransaction } from "../../utils/borrowReturnLogger"
-import { confirmBorrowTransaction, cancelBorrowTransaction, approveReturnTransaction, rejectReturnTransaction } from "../../utils/borrowReturnLogger"
-
-interface EquipmentAvailable {
-  [equipmentId: string]: number
-}
+import { approveReturnTransaction, rejectReturnTransaction, acknowledgeAdminReceivedBorrow } from "../../utils/borrowReturnLogger"
 
 export default function BorrowReturnHistory() {
   const navigate = useNavigate()
@@ -18,18 +14,15 @@ export default function BorrowReturnHistory() {
   const [transactions, setTransactions] = useState<BorrowTransaction[]>([])
   const [loading, setLoading] = useState(true)
   const [processingId, setProcessingId] = useState<string | null>(null)
-  const [filter, setFilter] = useState<"all" | "scheduled" | "borrowed" | "pending_return" | "returned" | "cancelled">("all")
+  const [filter, setFilter] = useState<"all" | "borrowed" | "pending_return" | "returned" | "awaiting_acknowledgment">("all")
   const [searchTerm, setSearchTerm] = useState("")
   const [borrowTypeFilter, setBorrowTypeFilter] = useState<"all" | "during-class" | "teaching" | "outside">("all")
   const [dateFilter, setDateFilter] = useState<"all" | "today" | "week" | "month" | "custom">("all")
   const [customStartDate, setCustomStartDate] = useState("")
   const [customEndDate, setCustomEndDate] = useState("")
   const [showFilters, setShowFilters] = useState(false)
-  const [showCancelModal, setShowCancelModal] = useState(false)
-  const [selectedBorrowId, setSelectedBorrowId] = useState<string | null>(null)
-  const [cancelReason, setCancelReason] = useState("")
   const [detailsModal, setDetailsModal] = useState<BorrowTransaction | null>(null)
-  const [equipmentAvailable, setEquipmentAvailable] = useState<EquipmentAvailable>({})
+  const [selectedBorrowId, setSelectedBorrowId] = useState<string | null>(null)
   const [rejectionReason, setRejectionReason] = useState("")
   const [showRejectModal, setShowRejectModal] = useState(false)
 
@@ -54,30 +47,16 @@ export default function BorrowReturnHistory() {
     fetchTransactions()
   }, [])
 
-  // Fetch equipment availability when details modal is opened for pending requests
+  // Fetch equipment availability when details modal is opened for pending returns
   useEffect(() => {
     const fetchEquipmentAvailability = async () => {
-      if (!detailsModal || detailsModal.status !== "scheduled") {
-        setEquipmentAvailable({})
+      if (!detailsModal || detailsModal.status !== "pending_return") {
         return
       }
 
       try {
-        const available: EquipmentAvailable = {}
-        
-        for (const item of detailsModal.equipmentItems) {
-          const equipmentRef = doc(db, "equipment", item.equipmentId)
-          const equipmentSnap = await getDoc(equipmentRef)
-          
-          if (equipmentSnap.exists()) {
-            // Get the current available quantity
-            const equipmentData = equipmentSnap.data()
-            const quantity = equipmentData.quantity || 0
-            available[item.equipmentId] = quantity
-          }
-        }
-        
-        setEquipmentAvailable(available)
+        // Equipment availability data could be used here in the future if needed
+        // Currently not displayed in the UI
       } catch (error) {
         console.error("Error fetching equipment availability:", error)
       }
@@ -138,7 +117,11 @@ export default function BorrowReturnHistory() {
   }
 
   const filteredTransactions = transactions.filter((txn) => {
-    const matchesStatus = filter === "all" || txn.status === filter
+    const matchesStatus = filter === "all" 
+      ? true 
+      : filter === "awaiting_acknowledgment" 
+        ? txn.status === "borrowed" && !txn.acknowledgedAt
+        : txn.status === filter
     const matchesBorrowType = borrowTypeFilter === "all" || txn.borrowType === borrowTypeFilter
     const matchesSearch =
       txn.userName.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -231,9 +214,10 @@ export default function BorrowReturnHistory() {
               hover:bg-gray-100
               transition
               mb-6
+              flex items-center justify-center gap-2
             "
           >
-            ย้อนกลับ
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
           </button>
 
           {/* Search Bar */}
@@ -292,11 +276,10 @@ export default function BorrowReturnHistory() {
                   <div className="flex gap-2 flex-wrap">
                     {[
                       { key: 'all', label: 'ทั้งหมด', color: 'gray' },
-                      { key: 'scheduled', label: 'รอรับอุปกรณ์', color: 'blue' },
+                      { key: 'awaiting_acknowledgment', label: 'รอการรับทราบ', color: 'blue' },
                       { key: 'borrowed', label: 'ยังไม่ได้คืน', color: 'yellow' },
                       { key: 'pending_return', label: 'รอการอนุมัติคืน', color: 'purple' },
-                      { key: 'returned', label: 'คืนแล้ว', color: 'green' },
-                      { key: 'cancelled', label: 'ยกเลิก', color: 'red' }
+                      { key: 'returned', label: 'คืนแล้ว', color: 'green' }
                     ].map((status) => (
                       <button
                         key={status.key}
@@ -439,6 +422,11 @@ export default function BorrowReturnHistory() {
                               ? `ยืม ${item.quantityBorrowed} / คืน ${item.quantityReturned}` 
                               : `${item.quantityBorrowed}`
                             } ชิ้น)
+                            {item.assetCodes && item.assetCodes.length > 0 && (
+                              <div className="text-xs text-blue-600 mt-0.5">
+                                รหัส: {item.assetCodes.join(", ")}
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -455,14 +443,14 @@ export default function BorrowReturnHistory() {
                     
                     {/* Right side - Status badge or action indicator */}
                     <div className="text-right text-xs">
-                      {txn.status === "scheduled" && (
-                        <div className="bg-blue-50 text-blue-700 px-2 py-1 rounded">
-                          รอดำเนินการ
+                      {txn.status === "borrowed" && !txn.acknowledgedAt && (
+                        <div className="bg-yellow-50 text-yellow-700 px-2 py-1 rounded">
+                          รอการรับทราบ
                         </div>
                       )}
-                      {txn.confirmedBy && (
+                      {txn.acknowledgedBy && (
                         <div className="text-gray-500 text-[11px] mt-1">
-                          ยืนยัน: {txn.confirmedBy}
+                          รับทราบ: {txn.acknowledgedBy}
                         </div>
                       )}
                     </div>
@@ -489,7 +477,6 @@ export default function BorrowReturnHistory() {
               <button
                 onClick={() => {
                   setDetailsModal(null)
-                  setShowCancelModal(false)
                   setSelectedBorrowId(null)
                 }}
                 className="text-gray-500 hover:text-gray-700 text-2xl"
@@ -526,20 +513,30 @@ export default function BorrowReturnHistory() {
                 <h3 className="font-semibold text-gray-900 mb-3 text-lg">อุปกรณ์ที่ยืม</h3>
                 <div className="space-y-2 text-sm">
                   {detailsModal.equipmentItems.map((item, idx) => {
-                    const availableQty = equipmentAvailable[item.equipmentId]
-                    const isInsufficientStock = detailsModal.status === "scheduled" && availableQty !== undefined && availableQty < item.quantityBorrowed
-                    
                     return (
-                      <div key={idx} className={`border border-gray-200 rounded-lg p-3 ${isInsufficientStock ? 'bg-red-50 border-red-300' : 'bg-gray-50'}`}>
+                      <div key={idx} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
                         <div className="flex justify-between items-start mb-2">
                           <div className="flex-1">
                             <p className="font-medium text-gray-900">{item.equipmentName}</p>
+                            
+                            {/* Asset codes section */}
+                            {item.assetCodes && item.assetCodes.length > 0 && (
+                              <div className="mt-2 mb-2">
+                                <p className="text-xs font-semibold text-gray-600 mb-1">รหัสอุปกรณ์:</p>
+                                <div className="flex flex-wrap gap-1">
+                                  {item.assetCodes.map((code, codeIdx) => (
+                                    <span
+                                      key={codeIdx}
+                                      className="px-2 py-1 rounded bg-blue-50 border border-blue-200 text-xs text-blue-800 font-medium"
+                                    >
+                                      {code}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                            
                             <div className="flex gap-4 mt-1 flex-wrap">
-                              {detailsModal.status === "scheduled" && (
-                                <p className="text-xs text-gray-600">
-                                  <span className="font-semibold">ขออนุมัติ:</span> {item.quantityBorrowed} ชิ้น
-                                </p>
-                              )}
                               {detailsModal.status === "borrowed" && (
                                 <p className="text-xs text-gray-600">
                                   <span className="font-semibold">ยืม:</span> {item.quantityBorrowed} ชิ้น
@@ -555,17 +552,7 @@ export default function BorrowReturnHistory() {
                                   </p>
                                 </>
                               )}
-                              {detailsModal.status === "scheduled" && availableQty !== undefined && (
-                                <p className={`text-xs font-semibold ${isInsufficientStock ? 'text-red-600' : 'text-green-600'}`}>
-                                  <span>คงเหลือ:</span> {availableQty} ชิ้น
-                                </p>
-                              )}
                             </div>
-                            {isInsufficientStock && (
-                              <div className="mt-2 p-2 bg-red-100 border border-red-300 rounded text-red-700 text-xs font-semibold">
-                                ⚠️ จำนวนไม่พอ! คงเหลือเพียง {availableQty} ชิ้น แต่ขออนุมัติ {item.quantityBorrowed} ชิ้น
-                              </div>
-                            )}
                           </div>
                         </div>
                       {/* Show return condition if available */}
@@ -587,6 +574,34 @@ export default function BorrowReturnHistory() {
                                 </p>
                               </div>
                             )}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Asset code conditions with notes */}
+                      {item.assetCodeConditions && item.assetCodeConditions.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-200">
+                          <p className="text-xs font-semibold text-gray-600 mb-2">รหัสอุปกรณ์และสถานะ:</p>
+                          <div className="space-y-1.5">
+                            {item.assetCodeConditions.map((codeItem, codeIdx) => (
+                              <div key={codeIdx} className="bg-gray-50 border border-gray-200 rounded p-2">
+                                <div className="flex items-center justify-between mb-1">
+                                  <span className="text-xs font-medium text-gray-800">{codeItem.code}</span>
+                                  <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                                    codeItem.condition === "ปกติ" ? "bg-green-100 text-green-800" :
+                                    codeItem.condition === "ชำรุด" ? "bg-orange-100 text-orange-800" :
+                                    "bg-red-100 text-red-800"
+                                  }`}>
+                                    {codeItem.condition}
+                                  </span>
+                                </div>
+                                {codeItem.notes && (
+                                  <div className="text-xs text-gray-700 mt-1">
+                                    <span className="font-semibold">หมายเหตุ:</span> {codeItem.notes}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
                           </div>
                         </div>
                       )}
@@ -650,120 +665,42 @@ export default function BorrowReturnHistory() {
                 </div>
               </div>
 
-              {/* Admin actions */}
-              {detailsModal.status === "scheduled" && (
+              {/* Admin actions for borrowed items waiting acknowledgment */}
+              {detailsModal.status === "borrowed" && !detailsModal.acknowledgedAt && (
                 <div className="border-t pt-4">
                   <h3 className="font-semibold text-gray-900 mb-3 text-lg">ดำเนินการ</h3>
-                  {!showCancelModal ? (
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={async () => {
-                          if (!user || processingId) return
-                          setProcessingId(detailsModal.borrowId)
-                          try {
-                            await confirmBorrowTransaction(detailsModal.borrowId, user, user.displayName || "Admin")
-                            const equipmentNames = detailsModal.equipmentItems.map(item => `${item.equipmentName} (${item.quantityBorrowed})`).join(", ")
-                            await logAdminAction({
-                              user,
-                              action: 'confirm',
-                              type: 'borrow',
-                              itemName: `การยืมของ ${detailsModal.userName}`,
-                              details: `ยืนยันและมอบอุปกรณ์: ${equipmentNames}`
-                            })
-                            setTransactions(prev => prev.map(t => 
-                              t.borrowId === detailsModal.borrowId 
-                                ? { ...t, status: "borrowed" as const, confirmedBy: user.displayName || "Admin" }
-                                : t
-                            ))
-                            setDetailsModal(null)
-                          } catch (error) {
-                            console.error("Error confirming:", error)
-                            alert("เกิดข้อผิดพลาด")
-                          } finally {
-                            setProcessingId(null)
-                          }
-                        }}
-                        disabled={processingId === detailsModal.borrowId}
-                        className="px-4 py-2 bg-green-500 text-white font-medium rounded-lg hover:bg-green-600 transition disabled:bg-gray-300"
-                      >
-                        {processingId === detailsModal.borrowId ? "ดำเนินการ..." : "✓ มอบอุปกรณ์"}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSelectedBorrowId(detailsModal.borrowId)
-                          setCancelReason("")
-                          setShowCancelModal(true)
-                        }}
-                        disabled={processingId === detailsModal.borrowId}
-                        className="px-4 py-2 bg-red-500 text-white font-medium rounded-lg hover:bg-red-600 transition disabled:bg-gray-300"
-                      >
-                        ✗ ยกเลิก
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                      <p className="text-sm font-medium text-gray-700 mb-3">กรุณาระบุเหตุผลในการยกเลิก</p>
-                      <textarea
-                        value={cancelReason}
-                        onChange={(e) => setCancelReason(e.target.value)}
-                        placeholder="ระบุเหตุผลที่นี่..."
-                        className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 resize-none text-sm mb-3"
-                        rows={3}
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => {
-                            setShowCancelModal(false)
-                            setCancelReason("")
-                          }}
-                          className="flex-1 px-3 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-100 transition"
-                        >
-                          ยกเลิก
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (!cancelReason.trim()) {
-                              alert("ต้องระบุเหตุผลในการยกเลิก!")
-                              return
-                            }
-                            
-                            if (!user || !selectedBorrowId) return
-                            setProcessingId(selectedBorrowId)
-                            
-                            try {
-                              await cancelBorrowTransaction(selectedBorrowId, user, user.displayName || "Admin", cancelReason)
-                              const equipmentNames = detailsModal.equipmentItems.map(item => `${item.equipmentName} (${item.quantityBorrowed})`).join(", ")
-                              await logAdminAction({
-                                user,
-                                action: 'cancel',
-                                type: 'borrow',
-                                itemName: `การยืมของ ${detailsModal.userName}`,
-                                details: `ยกเลิกการยืม: ${equipmentNames} | เหตุผล: ${cancelReason}`
-                              })
-                              setTransactions(prev => prev.map(t => 
-                                t.borrowId === selectedBorrowId 
-                                  ? { ...t, status: "cancelled" as const, cancelledBy: user.displayName || "Admin" }
-                                  : t
-                              ))
-                              setDetailsModal(null)
-                              setShowCancelModal(false)
-                              setSelectedBorrowId(null)
-                              setCancelReason("")
-                            } catch (error) {
-                              console.error("Error cancelling:", error)
-                              alert("เกิดข้อผิดพลาด")
-                            } finally {
-                              setProcessingId(null)
-                            }
-                          }}
-                          disabled={processingId === selectedBorrowId || !cancelReason.trim()}
-                          className="flex-1 px-3 py-2 bg-red-500 text-white font-medium rounded-lg hover:bg-red-600 transition disabled:bg-gray-300"
-                        >
-                          {processingId === selectedBorrowId ? "ดำเนินการ..." : "ยกเลิก"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <button
+                    onClick={async () => {
+                      if (!user || processingId) return
+                      setProcessingId(detailsModal.borrowId)
+                      try {
+                        await acknowledgeAdminReceivedBorrow(detailsModal.borrowId, user, user.displayName || "Admin")
+                        const equipmentNames = detailsModal.equipmentItems.map(item => `${item.equipmentName} (${item.quantityBorrowed})`).join(", ")
+                        await logAdminAction({
+                          user,
+                          action: 'acknowledge',
+                          type: 'borrow',
+                          itemName: `การยืมของ ${detailsModal.userName}`,
+                          details: `รับทราบการยืม: ${equipmentNames}`
+                        })
+                        setTransactions(prev => prev.map(t => 
+                          t.borrowId === detailsModal.borrowId 
+                            ? { ...t, acknowledgedBy: user.displayName || "Admin", acknowledgedAt: Date.now() }
+                            : t
+                        ))
+                        setDetailsModal(null)
+                      } catch (error) {
+                        console.error("Error acknowledging:", error)
+                        alert("เกิดข้อผิดพลาด")
+                      } finally {
+                        setProcessingId(null)
+                      }
+                    }}
+                    disabled={processingId === detailsModal.borrowId}
+                    className="w-full px-4 py-2 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition disabled:bg-gray-300"
+                  >
+                    {processingId === detailsModal.borrowId ? "ดำเนินการ..." : "✓ รับทราบ"}
+                  </button>
                 </div>
               )}
 

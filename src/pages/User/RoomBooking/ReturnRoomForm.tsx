@@ -8,8 +8,10 @@ interface ReturnRoomFormProps {
   onConfirmReturn: (returnData: {
     bookingId: string
     roomCondition: string
+    equipmentCondition: string
     furniture: string[]
     notes: string
+    pictures: string[]
   }) => void
 }
 
@@ -52,15 +54,21 @@ export default function ReturnRoomForm({ booking, onConfirmReturn }: ReturnRoomF
     onConfirmReturn({
       bookingId: booking.id,
       roomCondition,
+      equipmentCondition,
       furniture: [],
-      notes
+      notes,
+      pictures
     })
     setShowApprovalModal(true)
   }
 
   const handleApprovalModalClose = () => {
     setShowApprovalModal(false)
-    navigate(-1)
+    if (window.history.length > 1) {
+      navigate(-1)
+    } else {
+      navigate('/home')
+    }
   }
 
   return (
@@ -251,7 +259,13 @@ export default function ReturnRoomForm({ booking, onConfirmReturn }: ReturnRoomF
             {/* Buttons */}
             <div className="flex gap-3">
               <button
-                onClick={() => navigate(-1)}
+                onClick={() => {
+                  if (window.history.length > 1) {
+                    navigate(-1)
+                  } else {
+                    navigate('/home')
+                  }
+                }}
                 className="flex-1 py-3 rounded-full border border-gray-400 text-gray-600 text-sm font-medium hover:bg-gray-100 transition"
               >
                 ยกเลิก

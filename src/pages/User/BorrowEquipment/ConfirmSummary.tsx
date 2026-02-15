@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { doc, getDoc } from "firebase/firestore"
+import { doc, getDoc, collection, getDocs, query, where, writeBatch } from "firebase/firestore"
 import { db } from "../../../firebase/firebase"
 import Header from "../../../components/Header"
 import { useAuth } from "../../../hooks/useAuth"
@@ -12,12 +12,19 @@ interface ConfirmSummaryProps {
   setCartItems?: (items: SelectedEquipment[]) => void
 }
 
+interface AssetCode {
+  equipmentId: string
+  code: string
+  selected: boolean
+}
+
 export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
   const navigate = useNavigate()
   const { user } = useAuth()
   const [fullName, setFullName] = useState<string>("")
   const [userIdNumber, setUserIdNumber] = useState<string>("")
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [assetCodesMap, setAssetCodesMap] = useState<Map<string, AssetCode[]>>(new Map())
   const totalItems = cartItems.reduce((sum, item) => sum + item.selectedQuantity, 0)
 
   // Get borrow info from sessionStorage
@@ -56,6 +63,45 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
     fetchUserFullName()
   }, [user])
 
+  // Fetch available asset codes for items
+  useEffect(() => {
+    const fetchAssetCodes = async () => {
+      try {
+        const newAssetCodesMap = new Map<string, AssetCode[]>()
+
+        for (const item of cartItems) {
+          if (item.category === "asset") {
+            // Fetch all available equipment documents with the same name (NEW: Option A structure)
+            // Each document is one serial code with available: true flag at document level
+            const q = query(
+              collection(db, "equipment"),
+              where("name", "==", item.name),
+              where("available", "==", true) // Only get available codes
+            )
+            const snapshot = await getDocs(q)
+            const codes: AssetCode[] = snapshot.docs.map((doc) => ({
+              equipmentId: doc.id,
+              code: doc.data().serialCode || doc.id, // Use serialCode if available, fallback to id
+              selected: false
+            }))
+            
+            // Auto-select the first N codes based on selected quantity
+            const selectedCodes = codes.slice(0, item.selectedQuantity).map(c => ({ ...c, selected: true }))
+            newAssetCodesMap.set(item.id, selectedCodes.concat(codes.slice(item.selectedQuantity)))
+          }
+        }
+
+        setAssetCodesMap(newAssetCodesMap)
+      } catch (error) {
+        console.error("Error fetching asset codes:", error)
+      }
+    }
+
+    if (cartItems.length > 0) {
+      fetchAssetCodes()
+    }
+  }, [cartItems])
+
   // Get current date and return date (same day)
   const today = new Date()
   const borrowDate = today.toLocaleDateString("th-TH", {
@@ -77,15 +123,32 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
   const handleConfirm = async () => {
     if (!user || isSubmitting) return
 
+    // Validate that assets have required number of codes selected
+    for (const item of cartItems) {
+      if (item.category === "asset") {
+        const codes = assetCodesMap.get(item.id) || []
+        const selectedCount = codes.filter(c => c.selected).length
+        if (selectedCount !== item.selectedQuantity) {
+          alert(`กรุณาเลือกรหัสอุปกรณ์ ${item.selectedQuantity} รายการสำหรับ ${item.name}`)
+          return
+        }
+      }
+    }
+
     setIsSubmitting(true)
     try {
       // Prepare equipment items for logging
-      const equipmentItems = cartItems.map(item => ({
-        equipmentId: item.id,
-        equipmentName: item.name,
-        equipmentCategory: item.category,
-        quantityBorrowed: item.selectedQuantity
-      }))
+      const equipmentItems = cartItems.map(item => {
+        const selectedCodes = assetCodesMap.get(item.id)?.filter(c => c.selected).map(c => c.code) || []
+        
+        return {
+          equipmentId: item.id,
+          equipmentName: item.name,
+          equipmentCategory: item.category,
+          quantityBorrowed: item.selectedQuantity,
+          assetCodes: selectedCodes // Use empty array instead of undefined
+        }
+      })
 
       // Log borrow transaction to Firestore
       await logBorrowTransaction(
@@ -96,11 +159,43 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
         borrowTime,
         returnDate,
         "ปกติ", // conditionBeforeBorrow
-        undefined, // notes
+        "", // notes - use empty string instead of undefined
         fullName,
         userIdNumber,
         expectedReturnTime || borrowTime
       )
+
+      // Update equipment availability in Firebase
+      const batch = writeBatch(db)
+      
+      for (const item of cartItems) {
+        if (item.category === "consumable") {
+          // For consumables: decrement quantity
+          const q = query(collection(db, "equipment"), where("name", "==", item.name))
+          const snapshot = await getDocs(q)
+          
+          snapshot.forEach((docSnap) => {
+            const currentQty = docSnap.data().quantity || 0
+            const newQty = Math.max(0, currentQty - item.selectedQuantity)
+            
+            batch.update(doc(db, "equipment", docSnap.id), {
+              quantity: newQty,
+              available: newQty > 0 // Mark as unavailable if quantity reaches 0
+            })
+          })
+        } else if (item.category === "asset") {
+          // For assets: mark borrowed serial codes as unavailable
+          const selectedCodes = assetCodesMap.get(item.id)?.filter(c => c.selected) || []
+          
+          selectedCodes.forEach((code) => {
+            batch.update(doc(db, "equipment", code.equipmentId), {
+              available: false // Mark as borrowed/unavailable
+            })
+          })
+        }
+      }
+      
+      await batch.commit()
 
       // Navigate to completion page
       navigate('/borrow/completion')
@@ -111,6 +206,7 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
       setIsSubmitting(false)
     }
   }
+
 
   return (
     <div
@@ -127,6 +223,25 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
       {/* ===== CONTENT ===== */}
       <div className="mt-6 flex justify-center">
         <div className="w-full max-w-[360px] px-4 flex flex-col items-center">
+          {/* Back Button */}
+          <button
+            onClick={() => navigate(-1)}
+            className="
+              w-full
+              py-3
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              mb-6
+              flex items-center justify-center gap-2
+            "
+          >
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
+          </button>
+
           {/* Summary Header */}
           <div className="w-full bg-gray-100 rounded-lg p-4 mb-6">
             <div className="flex items-center justify-between mb-2">
@@ -159,30 +274,56 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
           <div className="w-full mb-6">
             <h3 className="text-sm font-semibold text-gray-800 mb-3">รายการยืมทั้งหมด ({totalItems} รายการ)</h3>
             <div className="space-y-2">
-              {cartItems.map((item) => (
-                <div
-                  key={item.id}
-                  className="bg-white border border-gray-200 rounded-lg p-3 flex justify-between items-center"
-                >
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-800">{item.name}</h4>
-                    <p className="text-xs text-green-600 font-medium">
-                      {item.equipmentType ? (
-                        <>
-                          {item.equipmentType}
-                          {item.equipmentSubType && ` (${item.equipmentSubType})`}
-                        </>
-                      ) : (
-                        "ไม่ระบุประเภท"
-                      )}
-                    </p>
+              {cartItems.map((item) => {
+                const codes = assetCodesMap.get(item.id) || []
+                const selectedCount = codes.filter(c => c.selected).length
+                
+                return (
+                  <div
+                    key={item.id}
+                    className="bg-white border border-gray-200 rounded-lg p-3"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div>
+                        <h4 className="text-sm font-medium text-gray-800">{item.name}</h4>
+                        <p className="text-xs text-green-600 font-medium">
+                          {item.equipmentType ? (
+                            <>
+                              {item.equipmentType}
+                              {item.equipmentSubType && ` (${item.equipmentSubType})`}
+                            </>
+                          ) : (
+                            "ไม่ระบุประเภท"
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-gray-800">{item.selectedQuantity}</p>
+                        <p className="text-xs text-gray-500">{item.unit}</p>
+                      </div>
+                    </div>
+                    
+                    {/* Asset codes selection for asset category */}
+                    {item.category === "asset" && codes.length > 0 && (
+                      <div className="mt-2 pt-2 border-t border-gray-200">
+                        <p className="text-xs font-medium text-gray-700 mb-2">
+                          รหัสอุปกรณ์ที่เลือก ({selectedCount}/{item.selectedQuantity})
+                        </p>
+                        <div className="space-y-1">
+                          {codes.filter(code => code.selected).map((code, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-2 p-1 rounded bg-blue-50 border border-blue-100"
+                            >
+                              <span className="text-xs text-gray-700">✓ {code.code}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-gray-800">{item.selectedQuantity}</p>
-                    <p className="text-xs text-gray-500">{item.unit}</p>
-                  </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 
@@ -195,38 +336,22 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
           </div>
 
           {/* Buttons */}
-          <div className="w-full flex gap-3 mb-6">
-            <button
-              onClick={() => navigate(-1)}
-              className="
-                flex-1
-                px-4 py-2
-                rounded-full
-                border border-gray-400
-                text-sm text-gray-600
-                font-medium
-                hover:bg-gray-100
-                transition
-              "
-            >
-              ย้อนกลับ
-            </button>
-            <button
-              onClick={handleConfirm}
-              disabled={isSubmitting}
-              className={`
-                flex-1
-                px-4 py-2
-                rounded-full
-                text-white
-                text-sm font-medium
-                transition
-                ${isSubmitting ? "bg-gray-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600"}
-              `}
-            >
-              {isSubmitting ? "กำลังบันทึก..." : "เสร็จสิ้น"}
-            </button>
-          </div>
+          <button
+            onClick={handleConfirm}
+            disabled={isSubmitting}
+            className={`
+              w-full
+              px-4 py-3
+              rounded-full
+              text-white
+              text-sm font-medium
+              transition
+              mb-6
+              ${isSubmitting ? "bg-gray-400 cursor-not-allowed" : "bg-orange-500 hover:bg-orange-600"}
+            `}
+          >
+            {isSubmitting ? "กำลังบันทึก..." : "เสร็จสิ้น"}
+          </button>
         </div>
       </div>
     </div>

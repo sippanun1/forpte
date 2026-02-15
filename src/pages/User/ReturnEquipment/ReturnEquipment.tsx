@@ -7,6 +7,12 @@ import { db } from "../../../firebase/firebase"
 import { useAuth } from "../../../hooks/useAuth"
 import type { BorrowTransaction } from "../../../utils/borrowReturnLogger"
 
+interface AssetCodeCondition {
+  code: string
+  condition: "ปกติ" | "ชำรุด" | "สูญหาย"
+  notes?: string
+}
+
 interface EquipmentItem {
   borrowId: string
   id: string
@@ -29,6 +35,9 @@ interface EquipmentItem {
   returnGoodQty?: number
   returnDamagedQty?: number
   returnLostQty?: number
+  // Asset codes for individual tracking
+  assetCodes?: string[]
+  assetCodeConditions?: AssetCodeCondition[]
 }
 
 interface ReturnEquipmentProps {
@@ -43,6 +52,7 @@ export default function ReturnEquipment({ setReturnEquipment }: ReturnEquipmentP
   const [loading, setLoading] = useState(true)
   const [borrowRequests, setBorrowRequests] = useState<BorrowTransaction[]>([])
   const [selectedBorrow, setSelectedBorrow] = useState<BorrowTransaction | null>(null)
+  const [assetCodeMap, setAssetCodeMap] = useState<Map<string, AssetCodeCondition[]>>(new Map())
 
   useEffect(() => {
     const fetchBorrowedEquipment = async () => {
@@ -95,6 +105,7 @@ export default function ReturnEquipment({ setReturnEquipment }: ReturnEquipmentP
                 expectedReturnDate: txn.expectedReturnDate,
                 expectedReturnTime: txn.expectedReturnTime,
                 equipmentCategory: item.equipmentCategory,
+                assetCodes: item.assetCodes || [],
                 // Initialize asset breakdown fields
                 returnGoodQty: item.equipmentCategory === "consumable" ? undefined : item.quantityBorrowed,
                 returnDamagedQty: 0,
@@ -116,6 +127,26 @@ export default function ReturnEquipment({ setReturnEquipment }: ReturnEquipmentP
 
     fetchBorrowedEquipment()
   }, [user])
+
+  // Initialize asset code conditions when borrow is selected
+  useEffect(() => {
+    if (selectedBorrow) {
+      const newCodeMap = new Map<string, AssetCodeCondition[]>()
+      
+      selectedBorrow.equipmentItems.forEach((item) => {
+        if (item.equipmentCategory === "asset" && item.assetCodes) {
+          const equipmentKey = `${selectedBorrow.borrowId}-${item.equipmentId}`
+          const conditions: AssetCodeCondition[] = item.assetCodes.map(code => ({
+            code,
+            condition: "ปกติ"
+          }))
+          newCodeMap.set(equipmentKey, conditions)
+        }
+      })
+      
+      setAssetCodeMap(newCodeMap)
+    }
+  }, [selectedBorrow])
 
   const handleCheckChange = (key: string) => {
     setEquipment(equipment.map(item =>
@@ -152,6 +183,25 @@ export default function ReturnEquipment({ setReturnEquipment }: ReturnEquipmentP
       {/* ===== CONTENT ===== */}
       <div className="mt-6 flex justify-center">
         <div className="w-full max-w-[360px] px-4 flex flex-col items-center">
+          {/* Back Button */}
+          <button
+            onClick={() => navigate(-1)}
+            className="
+              w-full
+              py-3
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              mb-6
+              flex items-center justify-center gap-2
+            "
+          >
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
+          </button>
+
           {/* User Info Box */}
           {loading ? (
             <div className="w-full h-24 bg-gray-100 rounded-lg animate-pulse mb-6"></div>
@@ -221,55 +271,46 @@ export default function ReturnEquipment({ setReturnEquipment }: ReturnEquipmentP
             )}
           </div>
 
-          {/* Buttons */}
-          <div className="w-full flex gap-3 mb-6">
-            <button
-              onClick={() => navigate(-1)}
-              className="
-                flex-1
-                px-4 py-2
-                rounded-full
-                border border-gray-400
-                text-sm text-gray-600
-                font-medium
-                hover:bg-gray-100
-                transition
-              "
-            >
-              ย้อนกลับ
-            </button>
-            <button
-              onClick={() => {
-                const selectedItems = equipment.filter(item => item.checked)
-                if (selectedItems.length === 0) {
-                  alert("กรุณาเลือกอุปกรณ์ที่ต้องคืน")
-                  return
-                }
-                setReturnEquipment(selectedItems)
-                navigate('/return/summary')
-              }}
-              disabled={equipment.length === 0}
-              className="
-                flex-1
-                px-4 py-2
-                rounded-full
-                bg-orange-500
-                text-white
-                text-sm font-medium
-                hover:bg-orange-600
-                transition
-                disabled:bg-gray-300
-              "
-            >
-              ถัดไป
-            </button>
-          </div>
+          {/* Button */}
+          <button
+            onClick={() => {
+              const selectedItems = equipment.filter(item => item.checked)
+              if (selectedItems.length === 0) {
+                alert("กรุณาเลือกอุปกรณ์ที่ต้องคืน")
+                return
+              }
+              
+              // Add asset code conditions to selected items
+              const itemsWithConditions = selectedItems.map(item => ({
+                ...item,
+                assetCodeConditions: assetCodeMap.get(`${item.borrowId}-${item.id}`) || []
+              }))
+              
+              setReturnEquipment(itemsWithConditions)
+              navigate('/return/summary')
+            }}
+            disabled={equipment.length === 0}
+            className="
+              w-full
+              px-4 py-3
+              rounded-full
+              bg-orange-500
+              text-white
+              text-sm font-medium
+              hover:bg-orange-600
+              transition
+              disabled:bg-gray-300
+              mb-6
+            "
+          >
+            ถัดไป
+          </button>
         </div>
       </div>
 
       {/* Details Modal */}
       {selectedBorrow && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
+        <div className="fixed inset-0 backdrop-blur-xs bg-opacity-50 flex items-start justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-lg shadow-lg p-6 max-w-2xl w-full mt-10">
             <div className="flex justify-between items-start mb-6">
               <div>
@@ -360,99 +401,100 @@ export default function ReturnEquipment({ setReturnEquipment }: ReturnEquipmentP
                         </select>
                       </div>
                     ) : (
-                      // ASSET - Breakdown by condition
+                      // ASSET - Select condition for each asset code
                       <div className="space-y-3 ml-7">
-                        <div className="text-sm font-semibold text-gray-700 mb-2">ยืมไป: {item.quantityBorrowed} หน่วย</div>
-                        <div className="grid grid-cols-3 gap-2">
-                          {/* Good condition */}
-                          <div className="border border-green-300 bg-green-50 rounded p-2">
-                            <label className="text-xs font-semibold text-green-800 block mb-1">ปกติ</label>
-                            <input
-                              type="number"
-                              min="0"
-                              max={item.quantityBorrowed}
-                              value={foundEquipment?.returnGoodQty ?? item.quantityBorrowed}
-                              onChange={(e) => {
-                                const updated = equipment.map(eq =>
-                                  `${eq.borrowId}-${eq.id}` === equipmentKey
-                                    ? { ...eq, returnGoodQty: parseInt(e.target.value) || 0 }
-                                    : eq
-                                )
-                                setEquipment(updated)
-                              }}
-                              disabled={!foundEquipment?.checked}
-                              className="w-full h-7 px-2 border border-green-300 bg-white rounded text-sm font-semibold text-center outline-none disabled:bg-gray-100 disabled:text-gray-400 text-green-700"
-                            />
-                          </div>
-
-                          {/* Damaged */}
-                          <div className="border border-orange-300 bg-orange-50 rounded p-2">
-                            <label className="text-xs font-semibold text-orange-800 block mb-1">ชำรุด</label>
-                            <input
-                              type="number"
-                              min="0"
-                              max={item.quantityBorrowed}
-                              value={foundEquipment?.returnDamagedQty || 0}
-                              onChange={(e) => {
-                                const updated = equipment.map(eq =>
-                                  `${eq.borrowId}-${eq.id}` === equipmentKey
-                                    ? { ...eq, returnDamagedQty: parseInt(e.target.value) || 0 }
-                                    : eq
-                                )
-                                setEquipment(updated)
-                              }}
-                              disabled={!foundEquipment?.checked}
-                              className="w-full h-7 px-2 border border-orange-300 bg-white rounded text-sm font-semibold text-center outline-none disabled:bg-gray-100 disabled:text-gray-400 text-orange-700"
-                            />
-                          </div>
-
-                          {/* Lost */}
-                          <div className="border border-red-300 bg-red-50 rounded p-2">
-                            <label className="text-xs font-semibold text-red-800 block mb-1">สูญหาย</label>
-                            <input
-                              type="number"
-                              min="0"
-                              max={item.quantityBorrowed}
-                              value={foundEquipment?.returnLostQty || 0}
-                              onChange={(e) => {
-                                const updated = equipment.map(eq =>
-                                  `${eq.borrowId}-${eq.id}` === equipmentKey
-                                    ? { ...eq, returnLostQty: parseInt(e.target.value) || 0 }
-                                    : eq
-                                )
-                                setEquipment(updated)
-                              }}
-                              disabled={!foundEquipment?.checked}
-                              className="w-full h-7 px-2 border border-red-300 bg-white rounded text-sm font-semibold text-center outline-none disabled:bg-gray-100 disabled:text-gray-400 text-red-700"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Total validation */}
-                        {foundEquipment?.checked && (
-                          <div className="mt-2">
-                            {(() => {
-                              const total = (foundEquipment?.returnGoodQty ?? item.quantityBorrowed) + 
-                                           (foundEquipment?.returnDamagedQty || 0) + 
-                                           (foundEquipment?.returnLostQty || 0)
-                              const isValid = total === item.quantityBorrowed
+                        <div className="text-sm font-semibold text-gray-700 mb-3">เลือกสถานะสำหรับแต่ละรหัสอุปกรณ์ ({item.assetCodes?.length || 0} รหัส)</div>
+                        
+                        {item.assetCodes && item.assetCodes.length > 0 ? (
+                          <div className="space-y-2 max-h-48 overflow-y-auto border border-gray-200 rounded-lg p-2 bg-white">
+                            {item.assetCodes.map((assetCode, codeIdx) => {
+                              const codeConditions = assetCodeMap.get(equipmentKey) || []
+                              const codeCondition = codeConditions[codeIdx] || { code: assetCode, condition: "ปกติ" }
+                              const isNotGood = codeCondition.condition !== "ปกติ"
+                              
                               return (
-                                <div className={`text-xs font-semibold p-2 rounded ${
-                                  isValid 
-                                    ? 'bg-green-50 text-green-800 border border-green-200' 
-                                    : 'bg-red-50 text-red-800 border border-red-200'
-                                }`}>
-                                  รวม: {total} / {item.quantityBorrowed} {
-                                    isValid 
-                                      ? '✓ ถูกต้อง' 
-                                      : '✗ ต้องว่างเว้น ' + (item.quantityBorrowed - total) + ' หน่วย'
-                                  }
+                                <div key={codeIdx} className="border border-gray-100 rounded bg-gray-50 p-2 mb-2">
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <div className="flex-1 min-w-0">
+                                      <div className="text-xs font-medium text-gray-800">{assetCode}</div>
+                                    </div>
+                                    <select
+                                      value={codeCondition.condition}
+                                      onChange={(e) => {
+                                        const newConditions = [...codeConditions]
+                                        newConditions[codeIdx] = {
+                                          code: assetCode,
+                                          condition: e.target.value as "ปกติ" | "ชำรุด" | "สูญหาย",
+                                          notes: codeCondition.notes || ""
+                                        }
+                                        setAssetCodeMap(new Map(assetCodeMap).set(equipmentKey, newConditions))
+                                      }}
+                                      disabled={!foundEquipment?.checked}
+                                      className={`text-xs px-2 py-1 rounded border cursor-pointer outline-none disabled:bg-gray-300 disabled:text-gray-600
+                                        ${codeCondition.condition === "ปกติ" ? "bg-green-50 border-green-300 text-green-700" : ""}
+                                        ${codeCondition.condition === "ชำรุด" ? "bg-orange-50 border-orange-300 text-orange-700" : ""}
+                                        ${codeCondition.condition === "สูญหาย" ? "bg-red-50 border-red-300 text-red-700" : ""}
+                                      `}
+                                    >
+                                      <option value="ปกติ">✓ ปกติ</option>
+                                      <option value="ชำรุด">⚠ ชำรุด</option>
+                                      <option value="สูญหาย">✗ สูญหาย</option>
+                                    </select>
+                                  </div>
+                                  
+                                  {isNotGood && (
+                                    <input
+                                      type="text"
+                                      placeholder={codeCondition.condition === "ชำรุด" ? "รายละเอียดการชำรุด..." : "เหตุผลการสูญหาย..."}
+                                      value={codeCondition.notes || ""}
+                                      onChange={(e) => {
+                                        const newConditions = [...codeConditions]
+                                        newConditions[codeIdx] = {
+                                          ...codeCondition,
+                                          notes: e.target.value
+                                        }
+                                        setAssetCodeMap(new Map(assetCodeMap).set(equipmentKey, newConditions))
+                                      }}
+                                      disabled={!foundEquipment?.checked}
+                                      className="w-full text-xs px-2 py-1.5 border border-gray-300 rounded outline-none disabled:bg-gray-200 disabled:text-gray-400 focus:border-orange-500 focus:ring-1 focus:ring-orange-300"
+                                    />
+                                  )}
                                 </div>
                               )
-                            })()}
+                            })}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500 p-3 bg-gray-50 rounded border border-gray-200">
+                            ไม่มีรหัสอุปกรณ์ที่เก็บไว้สำหรับสินค้านี้
                           </div>
                         )}
-
+                        
+                        {/* Summary of conditions */}
+                        {foundEquipment?.checked && item.assetCodes && item.assetCodes.length > 0 && (
+                          <div className="mt-3 p-2 rounded border border-gray-200 bg-gray-50">
+                            <div className="text-xs font-semibold text-gray-700 mb-1">สรุป:</div>
+                            <div className="grid grid-cols-3 gap-2 text-xs">
+                              <div className="bg-green-50 border border-green-200 rounded p-1 text-center">
+                                <div className="font-semibold text-green-700">
+                                  {(assetCodeMap.get(equipmentKey) || []).filter(c => c.condition === "ปกติ").length}
+                                </div>
+                                <div className="text-green-600">ปกติ</div>
+                              </div>
+                              <div className="bg-orange-50 border border-orange-200 rounded p-1 text-center">
+                                <div className="font-semibold text-orange-700">
+                                  {(assetCodeMap.get(equipmentKey) || []).filter(c => c.condition === "ชำรุด").length}
+                                </div>
+                                <div className="text-orange-600">ชำรุด</div>
+                              </div>
+                              <div className="bg-red-50 border border-red-200 rounded p-1 text-center">
+                                <div className="font-semibold text-red-700">
+                                  {(assetCodeMap.get(equipmentKey) || []).filter(c => c.condition === "สูญหาย").length}
+                                </div>
+                                <div className="text-red-600">สูญหาย</div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                     
@@ -584,7 +626,13 @@ export default function ReturnEquipment({ setReturnEquipment }: ReturnEquipmentP
                     }
                   }
                   
-                  setReturnEquipment(selectedItems)
+                  // Add asset code conditions to selected items
+                  const itemsWithConditions = selectedItems.map(item => ({
+                    ...item,
+                    assetCodeConditions: assetCodeMap.get(`${item.borrowId}-${item.id}`) || []
+                  }))
+                  
+                  setReturnEquipment(itemsWithConditions)
                   setSelectedBorrow(null)
                   navigate('/return/summary')
                 }}

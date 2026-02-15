@@ -7,6 +7,8 @@ interface Room {
   availability: string
   capacity: string
   status: string
+  usageDays?: Record<string, boolean>
+  timeRanges?: Record<string, { start: string; end: string }>
 }
 
 interface ListPopularRoomProps {

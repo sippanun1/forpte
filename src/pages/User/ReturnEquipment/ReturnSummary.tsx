@@ -48,6 +48,25 @@ export default function ReturnSummary({ returnEquipment, setReturnEquipment }: R
       {/* ===== CONTENT ===== */}
       <div className="mt-6 flex justify-center">
         <div className="w-full max-w-[360px] px-4 flex flex-col items-center">
+          {/* Back Button */}
+          <button
+            onClick={() => navigate(-1)}
+            className="
+              w-full
+              py-3
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              mb-6
+              flex items-center justify-center gap-2
+            "
+          >
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
+          </button>
+
           {/* Summary Header */}
           <div className="w-full bg-gray-100 rounded-lg p-4 mb-6">
             <div className="flex items-center justify-between mb-2">
@@ -88,7 +107,9 @@ export default function ReturnSummary({ returnEquipment, setReturnEquipment }: R
                     ) : (
                       // For assets, calculate from breakdown
                       (() => {
-                        const returnedQty = (item.returnGoodQty || 0) + (item.returnDamagedQty || 0) + (item.returnLostQty || 0)
+                        const returnedQty = item.assetCodeConditions && item.assetCodeConditions.length > 0
+                          ? item.assetCodeConditions.length
+                          : ((item.returnGoodQty || 0) + (item.returnDamagedQty || 0) + (item.returnLostQty || 0))
                         return (
                           <div>
                             <p className="text-xs text-gray-600">ยืม / คืน</p>
@@ -128,16 +149,56 @@ export default function ReturnSummary({ returnEquipment, setReturnEquipment }: R
                     <div className="grid grid-cols-3 gap-2">
                       <div className="text-center p-2 bg-green-50 border border-green-200 rounded">
                         <p className="text-xs text-gray-600 font-semibold">ปกติ</p>
-                        <p className="text-sm font-bold text-green-700">{item.returnGoodQty || 0}</p>
+                        <p className="text-sm font-bold text-green-700">
+                          {item.assetCodeConditions && item.assetCodeConditions.length > 0
+                            ? item.assetCodeConditions.filter(c => c.condition === "ปกติ").length
+                            : item.returnGoodQty || 0}
+                        </p>
                       </div>
                       <div className="text-center p-2 bg-orange-50 border border-orange-200 rounded">
                         <p className="text-xs text-gray-600 font-semibold">ชำรุด</p>
-                        <p className="text-sm font-bold text-orange-700">{item.returnDamagedQty || 0}</p>
+                        <p className="text-sm font-bold text-orange-700">
+                          {item.assetCodeConditions && item.assetCodeConditions.length > 0
+                            ? item.assetCodeConditions.filter(c => c.condition === "ชำรุด").length
+                            : item.returnDamagedQty || 0}
+                        </p>
                       </div>
                       <div className="text-center p-2 bg-red-50 border border-red-200 rounded">
                         <p className="text-xs text-gray-600 font-semibold">สูญหาย</p>
-                        <p className="text-sm font-bold text-red-700">{item.returnLostQty || 0}</p>
+                        <p className="text-sm font-bold text-red-700">
+                          {item.assetCodeConditions && item.assetCodeConditions.length > 0
+                            ? item.assetCodeConditions.filter(c => c.condition === "สูญหาย").length
+                            : item.returnLostQty || 0}
+                        </p>
                       </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Asset code conditions - if available */}
+                {item.equipmentCategory === "asset" && item.assetCodeConditions && item.assetCodeConditions.length > 0 && (
+                  <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 mt-3">
+                    <p className="text-xs text-gray-600 font-semibold mb-2">รหัสอุปกรณ์และสถานะ:</p>
+                    <div className="space-y-2">
+                      {item.assetCodeConditions.map((codeItem, idx) => (
+                        <div key={idx} className="border border-gray-200 rounded p-2 bg-white">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-medium text-gray-800 text-xs">{codeItem.code}</span>
+                            <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                              codeItem.condition === "ปกติ" ? "bg-green-100 text-green-800" :
+                              codeItem.condition === "ชำรุด" ? "bg-orange-100 text-orange-800" :
+                              "bg-red-100 text-red-800"
+                            }`}>
+                              {codeItem.condition}
+                            </span>
+                          </div>
+                          {codeItem.notes && (
+                            <div className="text-xs text-gray-600 mt-1 p-1 rounded bg-gray-50">
+                              <span className="font-semibold">หมายเหตุ:</span> {codeItem.notes}
+                            </div>
+                          )}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}
@@ -173,26 +234,11 @@ export default function ReturnSummary({ returnEquipment, setReturnEquipment }: R
           </div>
 
           {/* Buttons */}
-          <div className="w-full flex gap-3 mb-6">
-            <button
-              onClick={() => navigate(-1)}
-              className="
-                flex-1
-                px-4 py-2
-                rounded-full
-                border border-gray-400
-                text-sm text-gray-600
-                font-medium
-                hover:bg-gray-100
-                transition
-              "
-            >
-              ย้อนกลับ
-            </button>
+          <div className="w-full mb-6">
             <button
               onClick={() => setShowConfirmModal(true)}
               className="
-                flex-1
+                w-full
                 px-4 py-2
                 rounded-full
                 bg-orange-500
@@ -259,11 +305,25 @@ export default function ReturnSummary({ returnEquipment, setReturnEquipment }: R
                             returnNotes: item.notes
                           }
                         } else {
-                          // For assets: determine condition and quantity based on breakdown
-                          const goodQty = item.returnGoodQty || 0
-                          const damagedQty = item.returnDamagedQty || 0
-                          const lostQty = item.returnLostQty || 0
-                          const totalReturned = goodQty + damagedQty + lostQty
+                          // For assets: use assetCodeConditions if available
+                          let goodQty = 0
+                          let damagedQty = 0
+                          let lostQty = 0
+                          let totalReturned = 0
+                          
+                          if (item.assetCodeConditions && item.assetCodeConditions.length > 0) {
+                            // Calculate from assetCodeConditions
+                            goodQty = item.assetCodeConditions.filter(c => c.condition === "ปกติ").length
+                            damagedQty = item.assetCodeConditions.filter(c => c.condition === "ชำรุด").length
+                            lostQty = item.assetCodeConditions.filter(c => c.condition === "สูญหาย").length
+                            totalReturned = item.assetCodeConditions.length
+                          } else {
+                            // Fallback to old fields if no asset code conditions
+                            goodQty = item.returnGoodQty || 0
+                            damagedQty = item.returnDamagedQty || 0
+                            lostQty = item.returnLostQty || 0
+                            totalReturned = goodQty + damagedQty + lostQty
+                          }
                           
                           // Determine the primary return condition
                           let returnCondition = "ปกติ"
@@ -283,7 +343,8 @@ export default function ReturnSummary({ returnEquipment, setReturnEquipment }: R
                             returnGoodQty: goodQty,
                             returnDamagedQty: damagedQty,
                             returnLostQty: lostQty,
-                            returnNotes: item.notes || ""
+                            returnNotes: item.notes || "",
+                            assetCodeConditions: item.assetCodeConditions || []
                           }
                         }
                       })

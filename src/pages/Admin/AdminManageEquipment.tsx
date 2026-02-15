@@ -25,8 +25,10 @@ interface Equipment {
   quantity: number
   unit: string
   picture?: string
+  serialCode?: string
   equipmentType?: string
   equipmentSubType?: string
+  available?: boolean
 }
 
 interface AddStockForm {
@@ -79,6 +81,7 @@ export default function AdminManageEquipment() {
   const [showAddStockConfirmModal, setShowAddStockConfirmModal] = useState(false)
   const [showAssetEditModal, setShowAssetEditModal] = useState(false)
   const [assetIdsForItem, setAssetIdsForItem] = useState<string[]>([])
+  const [assetCodesForItem, setAssetCodesForItem] = useState<{ docId: string; serialCode: string }[]>([])
   const [selectedAssetIdToDelete, setSelectedAssetIdToDelete] = useState("")
   const [selectedEquipmentId, setSelectedEquipmentId] = useState("")
   const [assetEditNameThai, setAssetEditNameThai] = useState("")
@@ -130,6 +133,9 @@ export default function AdminManageEquipment() {
     equipmentType: "",
     equipmentSubType: ""
   })
+  // Loading states for double-click prevention
+  const [isSubmittingEquipment, setIsSubmittingEquipment] = useState(false)
+  const [isSubmittingStock, setIsSubmittingStock] = useState(false)
   // Custom equipment types (loaded from Firebase)
   const [equipmentTypes, setEquipmentTypes] = useState<{ [key: string]: string[] }>(defaultEquipmentTypes)
   const [showAddTypeModal, setShowAddTypeModal] = useState(false)
@@ -168,7 +174,7 @@ export default function AdminManageEquipment() {
             id: doc.data().id || doc.id,
             name: doc.data().name,
             category: doc.data().category,
-            quantity: doc.data().quantity,
+            quantity: doc.data().quantity || (doc.data().serialCode ? 1 : 0), // Default: 1 for assets, 0 for consumables
             unit: doc.data().unit || "ชิ้น",
             picture: doc.data().picture,
             equipmentType: doc.data().equipmentType || "",
@@ -253,6 +259,9 @@ export default function AdminManageEquipment() {
   }
 
   const handleAddEquipmentSubmit = async () => {
+    // Prevent double submission
+    if (isSubmittingEquipment) return
+    
     const isAsset = addEquipmentForm.category === "asset"
     const quantityNum = parseInt(addEquipmentForm.quantity) || 0
     
@@ -275,26 +284,34 @@ export default function AdminManageEquipment() {
     }
     
     if (addEquipmentForm.nameThai && addEquipmentForm.quantity) {
+      setIsSubmittingEquipment(true)
       try {
         if (isAsset) {
-          // Create separate equipment record for each ID
-          const newEquipments: Equipment[] = addEquipmentForm.ids.map((id) => ({
-            id: id,
+          // Create separate equipment record for each serial code
+          // NEW STRUCTURE (Option A): Each serial code is its own document
+          const newEquipments = addEquipmentForm.ids.map((serialCode) => ({
             name: `${addEquipmentForm.nameThai}${addEquipmentForm.nameEnglish ? ` (${addEquipmentForm.nameEnglish})` : ""}`,
+            serialCode: serialCode,
             category: addEquipmentForm.category,
-            quantity: 1,
+            quantity: 1, // Each asset serial code is 1 unit
             unit: addEquipmentForm.unit,
             picture: addEquipmentForm.picture,
             equipmentType: addEquipmentForm.equipmentType,
-            equipmentSubType: addEquipmentForm.equipmentSubType
+            equipmentSubType: addEquipmentForm.equipmentSubType,
+            available: true // New equipment is available
           }))
           
-          // Save each to Firestore
+          // Save each to Firestore with auto-generated id
           for (const equip of newEquipments) {
             await addDoc(collection(db, "equipment"), equip)
           }
           
-          setEquipment([...equipment, ...newEquipments])
+          // For state, add the documents back with their auto-generated IDs
+          setEquipment([...equipment, ...newEquipments.map((e, idx) => ({
+            ...e,
+            id: `asset-${Date.now()}-${idx}`,
+            quantity: 1
+          }))])
         } else {
           // For consumables, create single record
           const newEquipment: Equipment = {
@@ -305,7 +322,8 @@ export default function AdminManageEquipment() {
             unit: addEquipmentForm.unit,
             picture: addEquipmentForm.picture,
             equipmentType: addEquipmentForm.equipmentType,
-            equipmentSubType: addEquipmentForm.equipmentSubType
+            equipmentSubType: addEquipmentForm.equipmentSubType,
+            available: true // Consumables are available when created
           }
           
           // Save to Firestore
@@ -331,17 +349,38 @@ export default function AdminManageEquipment() {
       } catch (error) {
         console.error("Error adding equipment:", error)
         alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
+      } finally {
+        setIsSubmittingEquipment(false)
       }
     }
   }
 
-  const handleIssue = (equipmentName: string, itemAllIds: any) => {
+  const handleIssue = async (equipmentName: string, itemAllIds: any) => {
     const isAsset = equipment.find(e => e.name === equipmentName)?.category === "asset"
     
     // If asset with multiple IDs, show asset edit modal
     if (isAsset && itemAllIds.length > 1) {
       setAssetIdsForItem(itemAllIds)
       setSelectedEquipmentId(equipmentName)
+      
+      // Fetch full equipment data to get serialCodes
+      try {
+        const querySnapshot = await getDocs(collection(db, "equipment"))
+        const codes: { docId: string; serialCode: string }[] = []
+        
+        querySnapshot.forEach((docSnap) => {
+          if (itemAllIds.includes(docSnap.id)) {
+            codes.push({
+              docId: docSnap.id,
+              serialCode: docSnap.data().serialCode || docSnap.id
+            })
+          }
+        })
+        
+        setAssetCodesForItem(codes)
+      } catch (error) {
+        console.error("Error fetching asset codes:", error)
+      }
       
       // Extract Thai and English names
       const nameParts = equipmentName.split(" (")
@@ -399,10 +438,10 @@ export default function AdminManageEquipment() {
     const fullName = editForm.nameEnglish ? `${editForm.nameThai} (${editForm.nameEnglish})` : editForm.nameThai
     
     try {
-      // Find and update in Firestore
+      // Find and update in Firestore by Firestore document ID
       const querySnapshot = await getDocs(collection(db, "equipment"))
       for (const docSnap of querySnapshot.docs) {
-        if (docSnap.data().id === editForm.id) {
+        if (docSnap.id === editForm.id) {
           await updateDoc(doc(db, "equipment", docSnap.id), {
             name: fullName,
             quantity: parseInt(editForm.quantity) || 0,
@@ -509,25 +548,23 @@ export default function AdminManageEquipment() {
     }
   }
 
-  const handleAssetEditCodeDelete = (codeId: string) => {
-    setAssetCodeToDelete(codeId)
+  const handleAssetEditCodeDelete = (docId: string) => {
+    setAssetCodeToDelete(docId)
     setShowAssetCodeDeleteConfirm(true)
   }
 
   const handleAssetCodeDeleteConfirm = async () => {
     try {
-      // Delete from Firestore
-      const querySnapshot = await getDocs(collection(db, "equipment"))
-      for (const docSnap of querySnapshot.docs) {
-        if (docSnap.data().id === assetCodeToDelete) {
-          await deleteDoc(doc(db, "equipment", docSnap.id))
-          break
-        }
-      }
+      // Find the serialCode for logging
+      const deletedCode = assetCodesForItem.find(c => c.docId === assetCodeToDelete)
+      const deletedSerialCode = deletedCode?.serialCode || assetCodeToDelete
       
-      // Delete single code
-      const updatedEquipment = equipment.filter(item => item.id !== assetCodeToDelete)
-      setEquipment(updatedEquipment)
+      // Delete from Firestore using document ID
+      await deleteDoc(doc(db, "equipment", assetCodeToDelete))
+      
+      // Update assetCodesForItem
+      const updatedCodes = assetCodesForItem.filter(c => c.docId !== assetCodeToDelete)
+      setAssetCodesForItem(updatedCodes)
       
       // Update assetIdsForItem
       const updatedIds = assetIdsForItem.filter(id => id !== assetCodeToDelete)
@@ -540,7 +577,7 @@ export default function AdminManageEquipment() {
           action: 'delete',
           type: 'equipment',
           itemName: assetEditNameThai,
-          details: `Deleted asset code: ${assetCodeToDelete}`
+          details: `ลบรหัสครุภัณฑ์: ${deletedSerialCode}`
         })
       }
 
@@ -567,28 +604,26 @@ export default function AdminManageEquipment() {
 
   const handleAssetDeleteAllConfirm = async () => {
     try {
-      // Delete all from Firestore
-      const querySnapshot = await getDocs(collection(db, "equipment"))
+      // Delete all from Firestore using docIds from assetCodesForItem
       const batch = writeBatch(db)
-      for (const docSnap of querySnapshot.docs) {
-        if (assetIdsForItem.includes(docSnap.data().id)) {
-          batch.delete(doc(db, "equipment", docSnap.id))
-        }
+      for (const codeItem of assetCodesForItem) {
+        batch.delete(doc(db, "equipment", codeItem.docId))
       }
       await batch.commit()
       
-      // Delete all codes for this asset
-      const updatedEquipment = equipment.filter(item => !assetIdsForItem.includes(item.id))
-      setEquipment(updatedEquipment)
+      // Clear asset codes
+      setAssetCodesForItem([])
+      setAssetIdsForItem([])
 
       // Log admin action
       if (user) {
+        const codes = assetCodesForItem.map(c => c.serialCode).join(", ")
         logAdminAction({
           user,
           action: 'delete',
           type: 'equipment',
           itemName: assetEditNameThai,
-          details: `Deleted all ${assetIdsForItem.length} asset code(s): ${assetIdsForItem.join(", ")}`
+          details: `ลบครุภัณฑ์ทั้งหมด ${assetCodesForItem.length} รายการ (รหัส: ${codes})`
         })
       }
 
@@ -699,10 +734,10 @@ export default function AdminManageEquipment() {
     const idToDelete = selectedAssetIdToDelete || selectedEquipmentId
     
     try {
-      // Delete from Firestore
+      // Delete from Firestore using Firestore document ID
       const querySnapshot = await getDocs(collection(db, "equipment"))
       for (const docSnap of querySnapshot.docs) {
-        if (docSnap.data().id === idToDelete) {
+        if (docSnap.id === idToDelete) {
           await deleteDoc(doc(db, "equipment", docSnap.id))
           break
         }
@@ -782,36 +817,47 @@ export default function AdminManageEquipment() {
   }
 
   const handleAddStockConfirm = async () => {
+    // Prevent double submission
+    if (isSubmittingStock) return
+    
     const isAsset = addStockForm.equipmentCategory === "asset"
     const existingUnit = equipment.find(e => e.name === addStockForm.equipmentName)?.unit || "ชิ้น"
     
+    setIsSubmittingStock(true)
     try {
       if (isAsset) {
-        // Add each asset as a separate equipment record
-        const newEquipments: Equipment[] = addStockForm.assetIds.map((id) => ({
-          id: id,
+        // Add each asset as a separate equipment record with serialCode
+        // NEW STRUCTURE (Option A): Each serial code is its own document
+        const newEquipments = addStockForm.assetIds.map((serialCode) => ({
           name: addStockForm.equipmentName,
+          serialCode: serialCode,
           category: addStockForm.equipmentCategory,
-          quantity: 1,
-          unit: existingUnit
+          quantity: 1, // Each asset serial code is 1 unit
+          unit: existingUnit,
+          available: true // New stock is available
         }))
         
-        // Save each to Firestore
+        // Save each to Firestore with auto-generated id
         for (const equip of newEquipments) {
           await addDoc(collection(db, "equipment"), equip)
         }
         
-        setEquipment([...equipment, ...newEquipments])
+        setEquipment([...equipment, ...newEquipments.map((e, idx) => ({
+          ...e,
+          id: `asset-${Date.now()}-${idx}`,
+          quantity: 1
+        }))])
       } else {
         // For consumables, just add to quantity
         const newQuantity = (equipment.find(item => item.id === addStockForm.equipmentId)?.quantity || 0) + parseInt(addStockForm.quantity)
         
-        // Update in Firestore
+        // Update in Firestore using Firestore document ID
         const querySnapshot = await getDocs(collection(db, "equipment"))
         for (const docSnap of querySnapshot.docs) {
-          if (docSnap.data().id === addStockForm.equipmentId) {
+          if (docSnap.id === addStockForm.equipmentId) {
             await updateDoc(doc(db, "equipment", docSnap.id), {
-              quantity: newQuantity
+              quantity: newQuantity,
+              available: true // Ensure consumable is marked available
             })
             break
           }
@@ -844,6 +890,8 @@ export default function AdminManageEquipment() {
     } catch (error) {
       console.error("Error adding stock:", error)
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
+    } finally {
+      setIsSubmittingStock(false)
     }
   }
 
@@ -875,9 +923,10 @@ export default function AdminManageEquipment() {
                 text-sm font-medium
                 hover:bg-gray-100
                 transition
+                flex items-center justify-center gap-2
               "
             >
-              ย้อนกลับ
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
             </button>
             <button
               onClick={handleAddEquipment}
@@ -979,7 +1028,7 @@ export default function AdminManageEquipment() {
                   {/* Action Buttons */}
                   <div className="flex gap-2">
                     <button
-                      onClick={() => handleIssue(item.name, item.allIds)}
+                      onClick={async () => await handleIssue(item.name, item.allIds)}
                       className="
                         flex-1
                         py-2
@@ -1251,7 +1300,7 @@ export default function AdminManageEquipment() {
 
       {/* ===== ADD EQUIPMENT MODAL ===== */}
       {showAddEquipmentModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start z-50">
+        <div className="fixed inset-0 backdrop-blur-xs bg-opacity-50 flex items-start z-50">
           <div className="w-screen h-screen bg-white overflow-y-auto">
             {/* Modal Header */}
             <div className="bg-orange-500 text-white p-4 text-center font-semibold sticky top-0">
@@ -1458,9 +1507,10 @@ export default function AdminManageEquipment() {
                 </button>
                 <button
                   onClick={handleAddEquipmentSubmit}
-                  className="px-6 py-3 bg-orange-500 text-white rounded-full font-semibold hover:bg-orange-600 transition"
+                  disabled={isSubmittingEquipment}
+                  className="px-6 py-3 bg-orange-500 text-white rounded-full font-semibold hover:bg-orange-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  บันทึก
+                  {isSubmittingEquipment ? "กำลังบันทึก..." : "บันทึก"}
                 </button>
               </div>
             </div>
@@ -1634,13 +1684,13 @@ export default function AdminManageEquipment() {
               <div>
                 <label className="text-xs font-semibold text-gray-700 block mb-3">
                   รายการรหัสอุปกรณ์ 
-                  <span className="text-orange-600">({assetIdsForItem.filter(id => id.toLowerCase().includes(assetCodeSearchTerm.toLowerCase())).length} รายการ)</span>
+                  <span className="text-orange-600">({assetCodesForItem.filter(c => c.serialCode.toLowerCase().includes(assetCodeSearchTerm.toLowerCase())).length} รายการ)</span>
                 </label>
                 <div className="border border-gray-200 rounded-lg overflow-hidden bg-gray-50 max-h-80 overflow-y-auto">
-                  {assetIdsForItem
-                    .filter(id => id.toLowerCase().includes(assetCodeSearchTerm.toLowerCase()))
-                    .map((codeId, idx) => {
-                    const isEditing = editingCodeId === codeId
+                  {assetCodesForItem
+                    .filter(c => c.serialCode.toLowerCase().includes(assetCodeSearchTerm.toLowerCase()))
+                    .map((codeItem, idx) => {
+                    const isEditing = editingCodeId === codeItem.docId
                     
                     return (
                       <div
@@ -1660,7 +1710,7 @@ export default function AdminManageEquipment() {
                             />
                           ) : (
                             <div className="text-sm font-semibold text-gray-800">
-                              {codeId}
+                              {codeItem.serialCode}
                             </div>
                           )}
                         </div>
@@ -1671,26 +1721,16 @@ export default function AdminManageEquipment() {
                               <button
                                 onClick={async () => {
                                   // Save the edit
-                                  if (editingCodeValue.trim() && editingCodeValue !== codeId) {
+                                  if (editingCodeValue.trim() && editingCodeValue !== codeItem.serialCode) {
                                     try {
-                                      // Update Firestore
-                                      const querySnapshot = await getDocs(collection(db, "equipment"))
-                                      for (const docSnap of querySnapshot.docs) {
-                                        if (docSnap.data().id === codeId) {
-                                          await updateDoc(doc(db, "equipment", docSnap.id), {
-                                            id: editingCodeValue.trim()
-                                          })
-                                          break
-                                        }
-                                      }
+                                      // Update serialCode in Firestore
+                                      await updateDoc(doc(db, "equipment", codeItem.docId), {
+                                        serialCode: editingCodeValue.trim()
+                                      })
                                       
-                                      // Update equipment list
-                                      setEquipment(equipment.map(item =>
-                                        item.id === codeId ? { ...item, id: editingCodeValue.trim() } : item
-                                      ))
-                                      // Update assetIdsForItem
-                                      setAssetIdsForItem(assetIdsForItem.map(id =>
-                                        id === codeId ? editingCodeValue.trim() : id
+                                      // Update assetCodesForItem
+                                      setAssetCodesForItem(assetCodesForItem.map(c =>
+                                        c.docId === codeItem.docId ? { ...c, serialCode: editingCodeValue.trim() } : c
                                       ))
                                       
                                       // Log admin action
@@ -1700,11 +1740,11 @@ export default function AdminManageEquipment() {
                                           action: 'edit',
                                           type: 'equipment',
                                           itemName: assetEditNameThai,
-                                          details: `แก้ไขรหัสครุภัณฑ์: "${codeId}" → "${editingCodeValue.trim()}"`
+                                          details: `แก้ไขรหัสครุภัณฑ์: "${codeItem.serialCode}" → "${editingCodeValue.trim()}"`
                                         })
                                       }
                                     } catch (error) {
-                                      console.error("Error updating asset code:", error)
+                                      console.error("Error updating asset serial code:", error)
                                       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
                                     }
                                   }
@@ -1729,15 +1769,15 @@ export default function AdminManageEquipment() {
                             <>
                               <button
                                 onClick={() => {
-                                  setEditingCodeId(codeId)
-                                  setEditingCodeValue(codeId)
+                                  setEditingCodeId(codeItem.docId)
+                                  setEditingCodeValue(codeItem.serialCode)
                                 }}
                                 className="px-3 py-1.5 rounded-full text-xs font-medium border border-gray-300 text-gray-700 hover:bg-orange-50 hover:border-orange-300 transition"
                               >
                                 แก้ไข
                               </button>
                               <button
-                                onClick={() => handleAssetEditCodeDelete(codeId)}
+                                onClick={() => handleAssetEditCodeDelete(codeItem.docId)}
                                 className="px-3 py-1.5 rounded-full text-xs font-medium border border-red-300 text-red-600 hover:bg-red-50 hover:border-red-500 transition"
                               >
                                 ลบ
@@ -1794,7 +1834,7 @@ export default function AdminManageEquipment() {
                 คุณต้องการลบรหัสอุปกรณ์นี้หรือไม่?
               </p>
               <p className="text-lg font-bold text-gray-800 mb-4">
-                {assetCodeToDelete}
+                {assetCodesForItem.find(c => c.docId === assetCodeToDelete)?.serialCode || assetCodeToDelete}
               </p>
               <p className="text-xs text-gray-500">
                 การกระทำนี้ไม่สามารถยกเลิกได้
@@ -1836,7 +1876,7 @@ export default function AdminManageEquipment() {
                 {assetEditNameThai} {assetEditNameEnglish && `(${assetEditNameEnglish})`}
               </p>
               <p className="text-sm text-orange-600 font-semibold mb-4">
-                จะลบทั้งหมด {assetIdsForItem.length} รหัสอุปกรณ์
+                จะลบทั้งหมด {assetCodesForItem.length} รหัสอุปกรณ์
               </p>
               <p className="text-xs text-gray-500">
                 การกระทำนี้ไม่สามารถยกเลิกได้
@@ -2176,9 +2216,10 @@ export default function AdminManageEquipment() {
               </button>
               <button
                 onClick={handleAddStockConfirm}
-                className="flex-1 py-2 bg-orange-500 text-white rounded font-semibold hover:bg-orange-600 transition"
+                disabled={isSubmittingStock}
+                className="flex-1 py-2 bg-orange-500 text-white rounded font-semibold hover:bg-orange-600 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                ตกลง
+                {isSubmittingStock ? "กำลังบันทึก..." : "ตกลง"}
               </button>
             </div>
           </div>

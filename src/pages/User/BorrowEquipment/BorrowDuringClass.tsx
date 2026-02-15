@@ -92,6 +92,25 @@ export default function BorrowDuringClass() {
       {/* ===== CONTENT ===== */}
       <div className="mt-8 flex justify-center">
         <div className="w-full max-w-[360px] px-4 flex flex-col items-center">
+          {/* Back Button */}
+          <button
+            onClick={() => navigate(-1)}
+            className="
+              w-full
+              py-3
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              mb-6
+              flex items-center justify-center gap-2
+            "
+          >
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
+          </button>
+
           {/* User Info & DateTime */}
           <div className="w-full flex justify-between text-gray-600 text-sm mb-6">
             <div>{user?.displayName || user?.email || "User"}</div>
@@ -189,26 +208,12 @@ export default function BorrowDuringClass() {
           </div>
 
           {/* Buttons */}
-          <div className="w-full flex gap-4">
-            <button
-              onClick={() => navigate(-1)}
-              className="
-                flex-1 h-11
-                rounded-full
-                border border-gray-400
-                text-sm text-gray-600
-                font-medium
-                hover:bg-gray-100
-                transition
-              "
-            >
-              ย้อนกลับ
-            </button>
+          <div className="w-full">
             <button
               onClick={handleConfirm}
               disabled={!isFormValid}
               className={`
-                flex-1 h-11
+                w-full h-11
                 rounded-full
                 text-sm font-medium
                 text-white

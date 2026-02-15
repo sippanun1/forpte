@@ -44,6 +44,25 @@ export default function BorrowEquipment() {
       {/* ===== CONTENT ===== */}
       <div className="mt-8 flex justify-center">
         <div className="w-full max-w-[360px] px-4 flex flex-col items-center">
+          {/* Back Button */}
+          <button
+            onClick={() => navigate(-1)}
+            className="
+              w-full
+              py-3
+              rounded-full
+              border border-gray-400
+              text-gray-600
+              text-sm font-medium
+              hover:bg-gray-100
+              transition
+              mb-6
+              flex items-center justify-center gap-2
+            "
+          >
+            <img src="/arrow.svg" alt="back" className="w-5 h-5" />
+          </button>
+
           {/* Date & Time */}
           <div className="w-full flex justify-between text-gray-600 text-sm mb-6">
             <div>{currentDate}</div>
@@ -95,22 +114,6 @@ export default function BorrowEquipment() {
               ยืมนอกคาบเรียน
             </button>
           </div>
-
-          {/* Back Button */}
-          <button
-            onClick={() => navigate(-1)}
-            className="
-              mt-8
-              px-8 py-2
-              rounded-full
-              border border-gray-400
-              text-sm text-gray-600
-              hover:bg-gray-100
-              transition
-            "
-          >
-            ย้อนกลับ
-          </button>
         </div>
       </div>
     </div>
