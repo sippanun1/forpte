@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import Header from "../../components/Header"
+import SendEmailModal from "../../components/SendEmailModal"
 import { collection, getDocs, query, orderBy } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import { useAuth } from "../../hooks/useAuth"
@@ -25,6 +26,8 @@ export default function BorrowReturnHistory() {
   const [selectedBorrowId, setSelectedBorrowId] = useState<string | null>(null)
   const [rejectionReason, setRejectionReason] = useState("")
   const [showRejectModal, setShowRejectModal] = useState(false)
+  const [showEmailModal, setShowEmailModal] = useState(false)
+  const [emailBorrowData, setEmailBorrowData] = useState<BorrowTransaction | null>(null)
 
   useEffect(() => {
     const fetchTransactions = async () => {
@@ -669,38 +672,49 @@ export default function BorrowReturnHistory() {
               {detailsModal.status === "borrowed" && !detailsModal.acknowledgedAt && (
                 <div className="border-t pt-4">
                   <h3 className="font-semibold text-gray-900 mb-3 text-lg">ดำเนินการ</h3>
-                  <button
-                    onClick={async () => {
-                      if (!user || processingId) return
-                      setProcessingId(detailsModal.borrowId)
-                      try {
-                        await acknowledgeAdminReceivedBorrow(detailsModal.borrowId, user, user.displayName || "Admin")
-                        const equipmentNames = detailsModal.equipmentItems.map(item => `${item.equipmentName} (${item.quantityBorrowed})`).join(", ")
-                        await logAdminAction({
-                          user,
-                          action: 'acknowledge',
-                          type: 'borrow',
-                          itemName: `การยืมของ ${detailsModal.userName}`,
-                          details: `รับทราบการยืม: ${equipmentNames}`
-                        })
-                        setTransactions(prev => prev.map(t => 
-                          t.borrowId === detailsModal.borrowId 
-                            ? { ...t, acknowledgedBy: user.displayName || "Admin", acknowledgedAt: Date.now() }
-                            : t
-                        ))
-                        setDetailsModal(null)
-                      } catch (error) {
-                        console.error("Error acknowledging:", error)
-                        alert("เกิดข้อผิดพลาด")
-                      } finally {
-                        setProcessingId(null)
-                      }
-                    }}
-                    disabled={processingId === detailsModal.borrowId}
-                    className="w-full px-4 py-2 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition disabled:bg-gray-300"
-                  >
-                    {processingId === detailsModal.borrowId ? "ดำเนินการ..." : "✓ รับทราบ"}
-                  </button>
+                  <div className="space-y-2">
+                    <button
+                      onClick={async () => {
+                        if (!user || processingId) return
+                        setProcessingId(detailsModal.borrowId)
+                        try {
+                          await acknowledgeAdminReceivedBorrow(detailsModal.borrowId, user, user.displayName || "Admin")
+                          const equipmentNames = detailsModal.equipmentItems.map(item => `${item.equipmentName} (${item.quantityBorrowed})`).join(", ")
+                          await logAdminAction({
+                            user,
+                            action: 'acknowledge',
+                            type: 'equipment',
+                            itemName: `การยืมของ ${detailsModal.userName}`,
+                            details: `รับทราบการยืม: ${equipmentNames}`
+                          })
+                          setTransactions(prev => prev.map(t => 
+                            t.borrowId === detailsModal.borrowId 
+                              ? { ...t, acknowledgedBy: user.displayName || "Admin", acknowledgedAt: Date.now() }
+                              : t
+                          ))
+                          setDetailsModal(null)
+                        } catch (error) {
+                          console.error("Error acknowledging:", error)
+                          alert("เกิดข้อผิดพลาด")
+                        } finally {
+                          setProcessingId(null)
+                        }
+                      }}
+                      disabled={processingId === detailsModal.borrowId}
+                      className="w-full px-4 py-2 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition disabled:bg-gray-300"
+                    >
+                      {processingId === detailsModal.borrowId ? "ดำเนินการ..." : "✓ รับทราบ"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEmailBorrowData(detailsModal)
+                        setShowEmailModal(true)
+                      }}
+                      className="w-full px-4 py-2 bg-green-500 text-white font-medium rounded-lg hover:bg-green-600 transition"
+                    >
+                      📧 ส่งอีเมลแจ้งผู้ยืม
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -720,7 +734,7 @@ export default function BorrowReturnHistory() {
                             await logAdminAction({
                               user,
                               action: 'confirm',
-                              type: 'borrow',
+                              type: 'equipment',
                               itemName: `การคืนของ ${detailsModal.userName}`,
                               details: `อนุมัติการคืนอุปกรณ์: ${equipmentNames}`
                             })
@@ -796,7 +810,7 @@ export default function BorrowReturnHistory() {
                               await logAdminAction({
                                 user,
                                 action: 'cancel',
-                                type: 'borrow',
+                                type: 'equipment',
                                 itemName: `การคืนของ ${detailsModal.userName}`,
                                 details: `ปฏิเสธการคืนอุปกรณ์: ${equipmentNames} | เหตุผล: ${rejectionReason}`
                               })
@@ -830,6 +844,16 @@ export default function BorrowReturnHistory() {
           </div>
         </div>
       )}
+
+      {/* Send Email Modal */}
+      <SendEmailModal
+        isOpen={showEmailModal}
+        borrowData={emailBorrowData}
+        onClose={() => {
+          setShowEmailModal(false)
+          setEmailBorrowData(null)
+        }}
+      />
     </div>
   )
 }

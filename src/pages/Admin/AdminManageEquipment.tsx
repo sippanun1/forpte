@@ -6,6 +6,9 @@ import Header from "../../components/Header"
 import { useAuth } from "../../hooks/useAuth"
 import { logAdminAction } from "../../utils/adminLogger"
 
+// Low stock threshold for consumables (in units)
+const LOW_STOCK_THRESHOLD = 10
+
 // Default equipment types with subtypes
 const defaultEquipmentTypes: { [key: string]: string[] } = {
   "งานวัดและตรวจสอบ": [],
@@ -71,6 +74,8 @@ export default function AdminManageEquipment() {
   const { user } = useAuth()
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedCategory, setSelectedCategory] = useState<"all" | "consumable" | "asset" | "main">("all")
+  const [selectedStockStatus, setSelectedStockStatus] = useState<"all" | "outOfStock" | "lowStock">("all")
+  const [showStockStatusFilter, setShowStockStatusFilter] = useState(false)
   const [showAddStockModal, setShowAddStockModal] = useState(false)
   const [showAddEquipmentModal, setShowAddEquipmentModal] = useState(false)
   const [showSuccessModal, setShowSuccessModal] = useState(false)
@@ -139,9 +144,13 @@ export default function AdminManageEquipment() {
   // Custom equipment types (loaded from Firebase)
   const [equipmentTypes, setEquipmentTypes] = useState<{ [key: string]: string[] }>(defaultEquipmentTypes)
   const [showAddTypeModal, setShowAddTypeModal] = useState(false)
+  const [showManageTypesModal, setShowManageTypesModal] = useState(false)
   const [newTypeName, setNewTypeName] = useState("")
   const [newTypeSubTypes, setNewTypeSubTypes] = useState<string[]>([])
   const [newSubTypeInput, setNewSubTypeInput] = useState("")
+  const [selectedTypeToDelete, setSelectedTypeToDelete] = useState<string>("")
+  const [selectedSubTypeToDelete, setSelectedSubTypeToDelete] = useState<string>("")
+  const [showDeleteTypeConfirm, setShowDeleteTypeConfirm] = useState(false)
   const [equipment, setEquipment] = useState<Equipment[]>([])
   const [loading, setLoading] = useState(true)
 
@@ -197,6 +206,12 @@ export default function AdminManageEquipment() {
     { key: "asset", label: "ครุภัณฑ์" },
   ] as const
 
+  const stockStatuses = [
+    { key: "all", label: "สต๊อกทั้งหมด" },
+    { key: "outOfStock", label: "หมดสต๊อก" },
+    { key: "lowStock", label: "สต๊อกไม่เพียงพอ" },
+  ] as const
+
   // Group equipment by name for assets, keep consumables separate
   const getGroupedEquipment = () => {
     const grouped: { [key: string]: Equipment[] } = {}
@@ -227,7 +242,18 @@ export default function AdminManageEquipment() {
   const filteredEquipment = groupedEquipment.filter((item: any) => {
     const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase())
     const matchesCategory = selectedCategory === "all" || item.category === selectedCategory
-    return matchesSearch && matchesCategory
+    
+    // Filter by stock status (only for consumables)
+    let matchesStockStatus = true
+    if (selectedStockStatus !== "all") {
+      if (selectedStockStatus === "outOfStock") {
+        matchesStockStatus = item.quantity === 0
+      } else if (selectedStockStatus === "lowStock") {
+        matchesStockStatus = item.quantity > 0 && item.quantity < LOW_STOCK_THRESHOLD
+      }
+    }
+    
+    return matchesSearch && matchesCategory && matchesStockStatus
   })
 
   const handleAddEquipment = () => {
@@ -545,6 +571,82 @@ export default function AdminManageEquipment() {
     } catch (error) {
       console.error("Error adding equipment type:", error)
       alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
+    }
+  }
+
+  const handleDeleteType = (typeName: string) => {
+    setSelectedTypeToDelete(typeName)
+    setSelectedSubTypeToDelete("")
+    setShowDeleteTypeConfirm(true)
+  }
+
+  const handleDeleteSubType = (typeName: string, subTypeName: string) => {
+    setSelectedTypeToDelete(typeName)
+    setSelectedSubTypeToDelete(subTypeName)
+    setShowDeleteTypeConfirm(true)
+  }
+
+  const handleDeleteTypeConfirm = async () => {
+    try {
+      if (selectedSubTypeToDelete) {
+        // Delete subtype from an existing type
+        const querySnapshot = await getDocs(collection(db, "equipmentTypes"))
+        for (const docSnap of querySnapshot.docs) {
+          if (docSnap.data().name === selectedTypeToDelete) {
+            const updatedSubTypes = docSnap.data().subTypes.filter((st: string) => st !== selectedSubTypeToDelete)
+            await updateDoc(doc(db, "equipmentTypes", docSnap.id), {
+              subTypes: updatedSubTypes
+            })
+            break
+          }
+        }
+        
+        // Update local state
+        const updatedTypes = { ...equipmentTypes }
+        if (updatedTypes[selectedTypeToDelete]) {
+          updatedTypes[selectedTypeToDelete] = updatedTypes[selectedTypeToDelete].filter(
+            (st) => st !== selectedSubTypeToDelete
+          )
+          setEquipmentTypes(updatedTypes)
+        }
+        
+        setSuccessMessage(`ลบประเภทย่อย '${selectedSubTypeToDelete}' สำเร็จ!`)
+      } else {
+        // Delete entire type from Firestore
+        const querySnapshot = await getDocs(collection(db, "equipmentTypes"))
+        for (const docSnap of querySnapshot.docs) {
+          if (docSnap.data().name === selectedTypeToDelete) {
+            await deleteDoc(doc(db, "equipmentTypes", docSnap.id))
+            break
+          }
+        }
+        
+        // Remove from local state
+        const updatedTypes = { ...equipmentTypes }
+        delete updatedTypes[selectedTypeToDelete]
+        setEquipmentTypes(updatedTypes)
+        
+        setSuccessMessage(`ลบประเภท '${selectedTypeToDelete}' สำเร็จ!`)
+      }
+
+      // Log admin action
+      if (user) {
+        logAdminAction({
+          user,
+          action: 'delete',
+          type: 'equipment',
+          itemName: selectedTypeToDelete,
+          details: selectedSubTypeToDelete ? `ลบประเภทย่อย: ${selectedSubTypeToDelete}` : `ลบประเภทอุปกรณ์`
+        })
+      }
+
+      setShowDeleteTypeConfirm(false)
+      setSelectedTypeToDelete("")
+      setSelectedSubTypeToDelete("")
+      setShowSuccessModal(true)
+    } catch (error) {
+      console.error("Error deleting type:", error)
+      alert(`เกิดข้อผิดพลาด: ${error instanceof Error ? error.message : 'ไม่สามารถลบข้อมูล'}`)
     }
   }
 
@@ -967,24 +1069,98 @@ export default function AdminManageEquipment() {
             </button>
           </div>
 
-          {/* Category Filter */}
-          <div className="w-full mb-6 flex flex-wrap gap-2 justify-center">
-            {categories.map((cat) => (
-              <button
-                key={cat.key}
-                onClick={() => setSelectedCategory(cat.key as any)}
-                className={`
-                  px-4 py-2 rounded-full text-sm font-medium transition
-                  ${
-                    selectedCategory === cat.key
-                      ? "bg-orange-500 text-white"
-                      : "border border-gray-300 text-gray-700 hover:border-orange-500"
-                  }
-                `}
-              >
-                {cat.label}
-              </button>
-            ))}
+          {/* Collapsible Filter Section */}
+          <div className="w-full bg-gray-50 border border-gray-200 rounded-lg mb-6 overflow-hidden">
+            {/* Filter Header - Always Visible */}
+            <button
+              onClick={() => setShowStockStatusFilter(!showStockStatusFilter)}
+              className="w-full px-4 py-3 flex justify-between items-center hover:bg-gray-100 transition"
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-gray-700">🔧 ตัวกรอง</span>
+                {(selectedCategory !== "all" || selectedStockStatus !== "all") && (
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-600 text-xs rounded-full">
+                    กำลังใช้งาน
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-sm text-gray-500">
+                  พบ <span className="font-semibold text-blue-600">{filteredEquipment.length}</span> รายการ
+                </span>
+                <span className={`text-gray-400 transition-transform ${showStockStatusFilter ? 'rotate-180' : ''}`}>
+                  ▼
+                </span>
+              </div>
+            </button>
+            
+            {/* Collapsible Filter Content */}
+            {showStockStatusFilter && (
+              <div className="px-4 pb-4 border-t border-gray-200">
+                {/* Category Filter */}
+                <div className="mt-4 mb-4">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">หมวดหมู่:</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {categories.map((cat) => (
+                      <button
+                        key={cat.key}
+                        onClick={() => setSelectedCategory(cat.key as any)}
+                        className={`
+                          px-3 py-1.5 rounded-full text-xs font-medium transition
+                          ${
+                            selectedCategory === cat.key
+                              ? "bg-orange-500 text-white"
+                              : "border border-gray-300 text-gray-700 hover:border-orange-500"
+                          }
+                        `}
+                      >
+                        {cat.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Stock Status Filter */}
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">สต๊อก:</p>
+                  <div className="flex gap-2 flex-wrap">
+                    {stockStatuses.map((status) => (
+                      <button
+                        key={status.key}
+                        onClick={() => setSelectedStockStatus(status.key as any)}
+                        className={`
+                          px-3 py-1.5 rounded-full text-xs font-medium transition
+                          ${
+                            selectedStockStatus === status.key
+                              ? status.key === "outOfStock" 
+                                ? "bg-red-700 text-white"
+                                : status.key === "lowStock"
+                                ? "bg-red-500 text-white"
+                                : "bg-orange-500 text-white"
+                              : "border border-gray-300 text-gray-700 hover:border-orange-500"
+                          }
+                        `}
+                      >
+                        {status.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Clear Filters Button */}
+                <div className="pt-3 border-t border-gray-200">
+                  <button
+                    onClick={() => {
+                      setSelectedCategory("all")
+                      setSelectedStockStatus("all")
+                    }}
+                    className="text-xs text-gray-500 hover:text-red-500 transition flex items-center gap-1"
+                  >
+                    ✕ ล้างตัวกรองทั้งหมด
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Equipment List */}
@@ -1020,10 +1196,26 @@ export default function AdminManageEquipment() {
                     {item.name}
                   </h3>
 
-                  {/* Quantity */}
-                  <p className="text-xs text-gray-600 mb-3">
-                    จำนวนอุปกรณ์ {item.quantity} {item.unit || "ชิ้น"}
-                  </p>
+                  {/* Quantity with Low Stock Indicator */}
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-xs text-gray-600">
+                      จำนวนอุปกรณ์ {item.quantity} {item.unit || "ชิ้น"}
+                    </p>
+                    {item.category === "consumable" && (
+                      <>
+                        {item.quantity === 0 && (
+                          <span className="ml-2 px-2 py-1 bg-red-700 text-white text-xs font-semibold rounded">
+                            หมดสต๊อก
+                          </span>
+                        )}
+                        {item.quantity > 0 && item.quantity < LOW_STOCK_THRESHOLD && (
+                          <span className="ml-2 px-2 py-1 bg-red-500 text-white text-xs font-semibold rounded">
+                            สต๊อกใกล้หมด
+                          </span>
+                        )}
+                      </>
+                    )}
+                  </div>
 
                   {/* Action Buttons */}
                   <div className="flex gap-2">
@@ -1326,13 +1518,22 @@ export default function AdminManageEquipment() {
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <label className="text-xs font-semibold text-gray-700">ประเภทอุปกรณ์</label>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddTypeModal(true)}
-                    className="text-xs text-orange-500 hover:text-orange-600 font-medium"
-                  >
-                    + เพิ่มประเภทใหม่
-                  </button>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowManageTypesModal(true)}
+                      className="text-xs text-blue-500 hover:text-blue-600 font-medium"
+                    >
+                      จัดการประเภท
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowAddTypeModal(true)}
+                      className="text-xs text-orange-500 hover:text-orange-600 font-medium"
+                    >
+                      + เพิ่มประเภทใหม่
+                    </button>
+                  </div>
                 </div>
                 <select
                   value={addEquipmentForm.equipmentType}
@@ -2322,6 +2523,116 @@ export default function AdminManageEquipment() {
                 className="flex-1 py-2 bg-orange-500 text-white rounded-full font-semibold hover:bg-orange-600 transition"
               >
                 บันทึก
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Manage Types Modal */}
+      {showManageTypesModal && (
+        <div className="fixed inset-0 backdrop-blur-xs bg-opacity-50 flex items-center justify-center z-[60] px-4">
+          <div className="bg-white rounded-lg overflow-hidden w-full max-w-md max-h-[90vh] overflow-y-auto">
+            {/* Modal Header */}
+            <div className="bg-blue-500 text-white p-4 text-center font-semibold sticky top-0">
+              จัดการประเภทอุปกรณ์
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 flex flex-col gap-4">
+              {Object.keys(equipmentTypes).map((typeName) => (
+                <div key={typeName} className="border border-gray-200 rounded-lg p-4">
+                  {/* Type Name with Delete Button */}
+                  <div className="flex justify-between items-start gap-2 mb-3">
+                    <h3 className="font-semibold text-gray-800">{typeName}</h3>
+                    <button
+                      onClick={() => handleDeleteType(typeName)}
+                      className="text-red-500 hover:text-red-700 text-sm font-medium hover:bg-red-50 px-2 py-1 rounded transition"
+                    >
+                      ลบ
+                    </button>
+                  </div>
+
+                  {/* SubTypes */}
+                  {equipmentTypes[typeName] && equipmentTypes[typeName].length > 0 ? (
+                    <div className="space-y-2">
+                      {equipmentTypes[typeName].map((subType) => (
+                        <div
+                          key={subType}
+                          className="flex justify-between items-center bg-gray-50 px-3 py-2 rounded"
+                        >
+                          <span className="text-sm text-gray-700">{subType}</span>
+                          <button
+                            onClick={() => handleDeleteSubType(typeName, subType)}
+                            className="text-red-500 hover:text-red-700 text-xs font-medium"
+                          >
+                            ลบ
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">ไม่มีประเภทย่อย</p>
+                  )}
+                </div>
+              ))}
+
+              {Object.keys(equipmentTypes).length === 0 && (
+                <p className="text-center text-gray-500 py-8">ไม่มีประเภทอุปกรณ์</p>
+              )}
+            </div>
+
+            {/* Modal Buttons */}
+            <div className="flex gap-3 p-6 pt-0">
+              <button
+                onClick={() => setShowManageTypesModal(false)}
+                className="flex-1 py-2 bg-blue-500 text-white rounded-full font-semibold hover:bg-blue-600 transition"
+              >
+                ปิด
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteTypeConfirm && (
+        <div className="fixed inset-0 backdrop-blur-xs bg-opacity-50 flex items-center justify-center z-[70] px-4">
+          <div className="bg-white rounded-lg overflow-hidden w-full max-w-xs">
+            {/* Modal Header */}
+            <div className="bg-red-500 text-white p-4 text-center font-semibold">
+              ยืนยันการลบ
+            </div>
+
+            {/* Modal Content */}
+            <div className="p-6 text-center">
+              <p className="text-gray-700 mb-2">
+                คุณต้องการลบ <span className="font-semibold">{selectedSubTypeToDelete || selectedTypeToDelete}</span> หรือไม่?
+              </p>
+              {selectedSubTypeToDelete && (
+                <p className="text-xs text-gray-500">
+                  ประเภท: {selectedTypeToDelete}
+                </p>
+              )}
+            </div>
+
+            {/* Modal Buttons */}
+            <div className="flex gap-3 p-6 pt-0">
+              <button
+                onClick={() => {
+                  setShowDeleteTypeConfirm(false)
+                  setSelectedTypeToDelete("")
+                  setSelectedSubTypeToDelete("")
+                }}
+                className="flex-1 py-2 border border-gray-300 text-gray-700 rounded-full font-medium hover:bg-gray-100 transition"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={handleDeleteTypeConfirm}
+                className="flex-1 py-2 bg-red-500 text-white rounded-full font-semibold hover:bg-red-600 transition"
+              >
+                ลบ
               </button>
             </div>
           </div>

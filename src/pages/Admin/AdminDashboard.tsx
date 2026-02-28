@@ -1,10 +1,88 @@
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { signOut } from "firebase/auth"
-import { auth } from "../../firebase/firebase"
+import { collection, getDocs, query, where } from "firebase/firestore"
+import { auth, db } from "../../firebase/firebase"
 import Header from "../../components/Header"
+
+interface Equipment {
+  id: string
+  name: string
+  category: string
+  quantity: number
+  unit: string
+}
+
+interface RoomBooking {
+  id: string
+  roomCode: string
+  roomType: string
+  userName: string
+  date: string
+  startTime: string
+  endTime: string
+  status: "pending" | "approved" | "completed" | "cancelled" | "returned"
+}
 
 export default function AdminDashboard() {
   const navigate = useNavigate()
+  const [lowStockItems, setLowStockItems] = useState<Equipment[]>([])
+  const [pendingBookings, setPendingBookings] = useState<RoomBooking[]>([])
+
+  // Load low stock items from Firestore
+  useEffect(() => {
+    const loadLowStockItems = async () => {
+      try {
+        const q = query(collection(db, "equipment"), where("category", "==", "consumable"))
+        const querySnapshot = await getDocs(q)
+        const items: Equipment[] = []
+        querySnapshot.forEach((doc) => {
+          const data = doc.data()
+          if (data.quantity <= 4) {  // Low stock threshold: 4 or less
+            items.push({
+              id: doc.id,
+              name: data.name,
+              category: data.category,
+              quantity: data.quantity,
+              unit: data.unit || "ชิ้น"
+            })
+          }
+        })
+        setLowStockItems(items)
+      } catch (error) {
+        console.error("Error loading low stock items:", error)
+      }
+    }
+    loadLowStockItems()
+  }, [])
+
+  // Load pending and upcoming room bookings from Firestore
+  useEffect(() => {
+    const loadPendingBookings = async () => {
+      try {
+        const q = query(collection(db, "roomBookings"), where("status", "==", "pending"))
+        const querySnapshot = await getDocs(q)
+        const bookings: RoomBooking[] = []
+        querySnapshot.forEach((doc) => {
+          const data = doc.data()
+          bookings.push({
+            id: doc.id,
+            roomCode: data.roomCode || "",
+            roomType: data.roomType || "",
+            userName: data.userName || "",
+            date: data.date || "",
+            startTime: data.startTime || "",
+            endTime: data.endTime || "",
+            status: data.status || "pending"
+          })
+        })
+        setPendingBookings(bookings)
+      } catch (error) {
+        console.error("Error loading pending bookings:", error)
+      }
+    }
+    loadPendingBookings()
+  }, [])
 
   const handleLogout = async () => {
     try {
@@ -30,15 +108,60 @@ export default function AdminDashboard() {
       {/* ===== CONTENT ===== */}
       <div className="mt-8 flex justify-center">
         <div className="w-full max-w-[360px] px-4 flex flex-col items-center">
-          {/* Info Text */}
-          <div className="w-full mb-8 text-center">
-            <p className="text-sm font-medium mb-2" style={{ color: "#B71C1C" }}>
-              🏢 (เข้ามือบำรุงข้อมูลให้ใช้งานได้)
-            </p>
-            <p className="text-sm font-medium" style={{ color: "#B71C1C" }}>
-              (เข้ามือบำรุงห้องสถิติเบี้ยมจำนวนรุ่ค)
-            </p>
-          </div>
+          {/* Room Booking Alert */}
+          {pendingBookings.length > 0 && (
+            <div className="w-full mb-6 bg-amber-50 rounded-lg p-4 border border-amber-200">
+              <h3 className="text-sm font-semibold text-amber-800 mb-3">🔔 มีการจองห้องรอการอนุมัติ</h3>
+              <div className="flex flex-col gap-2 mb-4">
+                <div className="text-sm text-gray-700">
+                  <span className="font-semibold text-amber-700">{pendingBookings.length} รายการ</span>
+                  <span> รอการอนุมัติ</span>
+                </div>
+              </div>
+              <button
+                onClick={() => navigate('/admin/room-booking-history')}
+                className="w-full py-2 bg-orange-500 text-white text-sm font-semibold rounded-full hover:bg-orange-600 transition"
+              >
+                ดูการจองห้อง
+              </button>
+            </div>
+          )}
+
+          {/* Low Stock Alert */}
+          {lowStockItems.length > 0 && (
+            <div className="w-full mb-8 bg-red-50 rounded-lg p-4 border border-red-200">
+              <h3 className="text-sm font-semibold text-red-800 mb-3">⚠️ สต๊อกอุปกรณ์ไม่เพียงพอ</h3>
+              <div className="flex flex-col gap-3 mb-4">
+                {(() => {
+                  const outOfStockCount = lowStockItems.filter(item => item.quantity === 0).length
+                  const lowStockCount = lowStockItems.filter(item => item.quantity > 0).length
+                  
+                  return (
+                    <>
+                      {outOfStockCount > 0 && (
+                        <div className="text-sm text-gray-700">
+                          <span className="font-semibold text-red-700">{outOfStockCount} รายการ</span>
+                          <span> หมดสต๊อก</span>
+                        </div>
+                      )}
+                      {lowStockCount > 0 && (
+                        <div className="text-sm text-gray-700">
+                          <span className="font-semibold text-red-600">{lowStockCount} รายการ</span>
+                          <span> สต๊อกใกล้หมด</span>
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
+              </div>
+              <button
+                onClick={() => navigate('/admin/manage-equipment')}
+                className="w-full py-2 bg-orange-500 text-white text-sm font-semibold rounded-full hover:bg-orange-600 transition"
+              >
+                ไปจัดการอุปกรณ์
+              </button>
+            </div>
+          )}
 
           {/* Admin Buttons */}
           <div className="w-full flex flex-col gap-4">
@@ -54,7 +177,7 @@ export default function AdminDashboard() {
                 hover:opacity-90
                 transition
               "
-              style={{ backgroundColor: "#228B22" }}
+              style={{ backgroundColor: "#FF7F50" }}
             >
               จัดการห้อง
             </button>
@@ -88,9 +211,9 @@ export default function AdminDashboard() {
                 hover:opacity-90
                 transition
               "
-              style={{ backgroundColor: "#DC2626" }}
+              style={{ backgroundColor: "#FF7F50" }}
             >
-              📊 รายงานสภาพอุปกรณ์
+              รายงานสภาพอุปกรณ์
             </button>
 
             {/* Borrow/Return History Button */}
@@ -100,12 +223,12 @@ export default function AdminDashboard() {
                 w-full
                 py-4
                 rounded-full
-                text-gray-700
+                text-white
                 text-base font-semibold
                 hover:opacity-90
                 transition
               "
-              style={{ backgroundColor: "#fffab3" }}
+              style={{ backgroundColor: "#FF7F50" }}
             >
               ประวัติการยืม/คืน
             </button>
@@ -122,7 +245,7 @@ export default function AdminDashboard() {
                 hover:opacity-90
                 transition
               "
-              style={{ backgroundColor: "#0891B2" }}
+              style={{ backgroundColor: "#FF7F50" }}
             >
               ประวัติการจองห้อง
             </button>
@@ -139,7 +262,7 @@ export default function AdminDashboard() {
                 hover:opacity-90
                 transition
               "
-              style={{ backgroundColor: "#1E40AF" }}
+              style={{ backgroundColor: "#FF7F50" }}
             >
               ประวัติการจัดการของแอดมิน
             </button>
@@ -156,9 +279,26 @@ export default function AdminDashboard() {
                 hover:opacity-90
                 transition
               "
-              style={{ backgroundColor: "#6B46C1" }}
+              style={{ backgroundColor: "#FF7F50" }}
             >
               จัดการแอดมิน
+            </button>
+
+            {/* Manage Users Button */}
+            <button
+              onClick={() => navigate('/admin/manage-users')}
+              className="
+                w-full
+                py-4
+                rounded-full
+                text-white
+                text-base font-semibold
+                hover:opacity-90
+                transition
+              "
+              style={{ backgroundColor: "#FF7F50" }}
+            >
+              จัดการผู้ใช้งาน
             </button>
           </div>
 
@@ -167,16 +307,17 @@ export default function AdminDashboard() {
             onClick={handleLogout}
             className="
               w-full
-              mt-8
+              mt-16
               py-3
               rounded-full
               border border-gray-400
-              text-gray-600
+              text-white
               text-sm font-medium
               hover:bg-gray-100
               transition
               mb-6
             "
+            style={{ backgroundColor: "#DC2626" }}
           >
             ออกจากระบบ
           </button>

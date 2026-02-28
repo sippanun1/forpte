@@ -29,6 +29,7 @@ import RoomBookingHistory from './pages/Admin/RoomBookingHistory'
 import BorrowReturnHistory from './pages/Admin/BorrowReturnHistory'
 import UserBorrowReturnHistory from './pages/User/BorrowReturnHistory'
 import AdminManagement from './pages/Admin/AdminManagement'
+import AdminManageUsers from './pages/Admin/AdminManageUsers'
 import AdminHistory from './pages/Admin/AdminHistory'
 import ProtectedRoute from './components/ProtectedRoute'
 
@@ -162,6 +163,7 @@ function App() {
         <Route path="/admin/borrow-return-history" element={<ProtectedRoute element={<BorrowReturnHistory />} requiredRole="admin" />} />
         <Route path="/admin/room-booking-history" element={<ProtectedRoute element={<RoomBookingHistory />} requiredRole="admin" />} />
         <Route path="/admin/management" element={<ProtectedRoute element={<AdminManagement />} requiredRole="admin" />} />
+        <Route path="/admin/manage-users" element={<ProtectedRoute element={<AdminManageUsers />} requiredRole="admin" />} />
         <Route path="/admin/history" element={<ProtectedRoute element={<AdminHistory />} requiredRole="admin" />} />
         <Route path="/" element={<Navigate to="/login" replace />} />
       </Routes>

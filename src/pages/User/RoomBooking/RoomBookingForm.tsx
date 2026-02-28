@@ -5,6 +5,7 @@ import { db } from "../../../firebase/firebase"
 import { useAuth } from "../../../hooks/useAuth"
 import Header from "../../../components/Header"
 import DatePicker from "../../../components/DatePicker"
+import { sendRoomBookingEmailToAdmin, sendRoomBookingConfirmationToUser } from "../../../utils/emailService"
 import type { BookingData } from "../../../App"
 
 interface RoomBookingFormProps {
@@ -140,6 +141,7 @@ export default function RoomBookingForm({
         roomType: "", // Can be enhanced to include room type
         userName: user?.displayName || user?.email || "ผู้ใช้",
         userId: user?.uid || "",
+        userEmail: user?.email || "",
         date: date,
         startTime: startTime,
         endTime: endTime,
@@ -148,6 +150,25 @@ export default function RoomBookingForm({
         status: "pending",
         bookedAt: new Date().toISOString()
       })
+
+      // Send notification to admin only (wait for admin approval to notify user)
+      const emailData = {
+        adminEmail: import.meta.env.VITE_ADMIN_EMAIL || 'admin@example.com',
+        userEmail: user?.email || '',
+        userName: user?.displayName || user?.email || 'ผู้ใช้',
+        roomName: bookingData?.room || '',
+        date: date,
+        startTime: startTime,
+        endTime: endTime,
+        people: people,
+        objective: objective || '-',
+        userId: user?.uid || ''
+      }
+
+      // Send notification to admin only (user will be notified after admin approval)
+      if (user?.email) {
+        await sendRoomBookingEmailToAdmin(emailData)
+      }
 
       onConfirmBooking({
         room: bookingData?.room || "",

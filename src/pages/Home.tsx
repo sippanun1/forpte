@@ -80,9 +80,9 @@ export default function Home() {
               className="
                 w-full h-12
                 rounded-full
-                bg-yellow-300
-                text-gray-700 text-base font-medium
-                hover:bg-yellow-400
+                bg-orange-500
+                text-white text-base font-medium
+                hover:bg-orange-400
                 transition
               "
             >
@@ -108,9 +108,9 @@ export default function Home() {
               className="
                 w-full h-12
                 rounded-full
-                bg-green-500
+                bg-orange-500
                 text-white text-base font-medium
-                hover:bg-green-600
+                hover:bg-orange-600
                 transition
               "
             >
@@ -122,9 +122,9 @@ export default function Home() {
               className="
                 w-full h-12
                 rounded-full
-                bg-blue-500
+                bg-orange-500
                 text-white text-base font-medium
-                hover:bg-blue-600
+                hover:bg-orange-600
                 transition
               "
             >
@@ -135,6 +135,7 @@ export default function Home() {
               onClick={handleLogout}
               className="
                 w-full h-12
+                mt-16
                 rounded-full
                 bg-red-500
                 text-white text-base font-medium

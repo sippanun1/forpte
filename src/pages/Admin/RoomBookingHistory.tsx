@@ -3,13 +3,16 @@ import { useNavigate } from "react-router-dom"
 import { collection, getDocs, query, orderBy, updateDoc, doc } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import Header from "../../components/Header"
+import { sendRoomBookingConfirmationToUser } from "../../utils/emailService"
 
 interface RoomBookingRecord {
   id: string
   roomCode: string
+  roomName: string
   roomType: string
   userName: string
   userId: string
+  userEmail: string
   date: string
   startTime: string
   endTime: string
@@ -43,6 +46,7 @@ export default function RoomBookingHistory() {
   const [cancellationReason, setCancellationReason] = useState("")
   const [returnDetailsModalOpen, setReturnDetailsModalOpen] = useState(false)
   const [selectedReturnBooking, setSelectedReturnBooking] = useState<RoomBookingRecord | null>(null)
+  const [showPendingOnly, setShowPendingOnly] = useState(false)
 
   // Load booking history from Firebase
   useEffect(() => {
@@ -128,9 +132,34 @@ export default function RoomBookingHistory() {
 
   const handleApproveBooking = async (bookingId: string) => {
     try {
+      let bookingData: any = null
+      const bookingsSnapshot = await getDocs(collection(db, "roomBookings"))
+      bookingsSnapshot.forEach((doc) => {
+        if (doc.id === bookingId) {
+          bookingData = doc.data()
+        }
+      })
+
       await updateDoc(doc(db, "roomBookings", bookingId), {
         status: "approved"
       })
+
+      // Send approval email to user
+      if (bookingData && bookingData.userEmail) {
+        await sendRoomBookingConfirmationToUser({
+          adminEmail: import.meta.env.VITE_ADMIN_EMAIL || 'admin@example.com',
+          userEmail: bookingData.userEmail,
+          userName: bookingData.userName || 'ผู้ใช้',
+          roomName: bookingData.roomCode || 'ห้อง',
+          date: bookingData.date || '',
+          startTime: bookingData.startTime || '',
+          endTime: bookingData.endTime || '',
+          people: bookingData.people || 0,
+          objective: bookingData.purpose || '',
+          userId: bookingData.userId || ''
+        })
+      }
+
       // Refresh the bookings list
       const q = query(collection(db, "roomBookings"), orderBy("date", "desc"))
       const querySnapshot = await getDocs(q)
@@ -140,9 +169,11 @@ export default function RoomBookingHistory() {
         records.push({
           id: doc.id,
           roomCode: data.roomCode || "",
+          roomName: data.roomCode || "",
           roomType: data.roomType || "",
           userName: data.userName || "",
           userId: data.userId || "",
+          userEmail: data.userEmail || "",
           date: data.date || "",
           startTime: data.startTime || "",
           endTime: data.endTime || "",
@@ -161,6 +192,7 @@ export default function RoomBookingHistory() {
         })
       })
       setBookingHistory(records)
+      alert("อนุมัติการจองและส่งอีเมลยืนยันไปให้ผู้ใช้แล้ว")
     } catch (error) {
       console.error("Error approving booking:", error)
       alert("เกิดข้อผิดพลาดในการอนุมัติการจอง")
@@ -263,7 +295,7 @@ export default function RoomBookingHistory() {
   }
 
   // Check if any filter is active
-  const hasActiveFilters = filterStatus !== 'all' || roomTypeFilter !== 'all' || dateFilter !== 'all' || searchTerm !== ''
+  const hasActiveFilters = filterStatus !== 'all' || roomTypeFilter !== 'all' || dateFilter !== 'all' || searchTerm !== '' || showPendingOnly
 
   const clearFilters = () => {
     setFilterStatus('all')
@@ -272,6 +304,7 @@ export default function RoomBookingHistory() {
     setSearchTerm('')
     setCustomStartDate('')
     setCustomEndDate('')
+    setShowPendingOnly(false)
   }
 
   const filteredHistory = bookingHistory
@@ -282,6 +315,7 @@ export default function RoomBookingHistory() {
         record.purpose.toLowerCase().includes(searchTerm.toLowerCase())
       
       const matchesStatus = (() => {
+        if (showPendingOnly) return record.status === "pending"
         if (filterStatus === "all") return true
         if (filterStatus === "denied") return record.status === "cancelled" && record.cancelledByType === "admin"
         if (filterStatus === "cancelled") return record.status === "cancelled" && record.cancelledByType === "user"
@@ -464,6 +498,21 @@ export default function RoomBookingHistory() {
                       </div>
                     </div>
                   )}
+                </div>
+
+                {/* Pending Filter */}
+                <div className="mb-4">
+                  <p className="text-xs font-semibold text-gray-600 mb-2">สถานะพิเศษ:</p>
+                  <button
+                    onClick={() => setShowPendingOnly(!showPendingOnly)}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition ${
+                      showPendingOnly
+                        ? "bg-orange-500 text-white"
+                        : "border border-gray-300 text-gray-700 hover:border-orange-500"
+                    }`}
+                  >
+                    🔔 รอการอนุมัติ
+                  </button>
                 </div>
 
                 {/* Clear Filters Button */}
