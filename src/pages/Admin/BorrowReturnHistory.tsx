@@ -9,7 +9,6 @@ import { logAdminAction } from "../../utils/adminLogger"
 import type { BorrowTransaction } from "../../utils/borrowReturnLogger"
 import { approveReturnTransaction, rejectReturnTransaction, acknowledgeAdminReceivedBorrow } from "../../utils/borrowReturnLogger"
 import { sendBorrowAcknowledgmentEmail } from "../../utils/emailService"
-import { getBorrowTypeText } from "../../utils/borrowHelper"
 
 export default function BorrowReturnHistory() {
   const navigate = useNavigate()

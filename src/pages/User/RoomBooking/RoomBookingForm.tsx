@@ -5,7 +5,7 @@ import { db } from "../../../firebase/firebase"
 import { useAuth } from "../../../hooks/useAuth"
 import Header from "../../../components/Header"
 import DatePicker from "../../../components/DatePicker"
-import { sendRoomBookingEmailToAdmin, sendRoomBookingConfirmationToUser } from "../../../utils/emailService"
+import { sendRoomBookingEmailToAdmin } from "../../../utils/emailService"
 import type { BookingData } from "../../../App"
 
 interface RoomBookingFormProps {

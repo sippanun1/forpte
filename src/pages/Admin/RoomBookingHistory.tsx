@@ -60,9 +60,11 @@ export default function RoomBookingHistory() {
           records.push({
             id: doc.id,
             roomCode: data.roomCode || "",
+            roomName: data.roomCode || "",
             roomType: data.roomType || "",
             userName: data.userName || "",
             userId: data.userId || "",
+            userEmail: data.userEmail || "",
             date: data.date || "",
             startTime: data.startTime || "",
             endTime: data.endTime || "",
@@ -233,9 +235,11 @@ export default function RoomBookingHistory() {
         records.push({
           id: doc.id,
           roomCode: data.roomCode || "",
+          roomName: data.roomCode || "",
           roomType: data.roomType || "",
           userName: data.userName || "",
           userId: data.userId || "",
+          userEmail: data.userEmail || "",
           date: data.date || "",
           startTime: data.startTime || "",
           endTime: data.endTime || "",
