@@ -8,6 +8,8 @@ import { useAuth } from "../../hooks/useAuth"
 import { logAdminAction } from "../../utils/adminLogger"
 import type { BorrowTransaction } from "../../utils/borrowReturnLogger"
 import { approveReturnTransaction, rejectReturnTransaction, acknowledgeAdminReceivedBorrow } from "../../utils/borrowReturnLogger"
+import { sendBorrowAcknowledgmentEmail } from "../../utils/emailService"
+import { getBorrowTypeText } from "../../utils/borrowHelper"
 
 export default function BorrowReturnHistory() {
   const navigate = useNavigate()
@@ -679,7 +681,25 @@ export default function BorrowReturnHistory() {
                         setProcessingId(detailsModal.borrowId)
                         try {
                           await acknowledgeAdminReceivedBorrow(detailsModal.borrowId, user, user.displayName || "Admin")
+                          
+                          // Send email to borrower
                           const equipmentNames = detailsModal.equipmentItems.map(item => `${item.equipmentName} (${item.quantityBorrowed})`).join(", ")
+                          try {
+                            await sendBorrowAcknowledgmentEmail({
+                              userEmail: detailsModal.userEmail,
+                              userName: detailsModal.userName,
+                              equipmentNames: detailsModal.equipmentItems.map(item => `${item.equipmentName} (${item.quantityBorrowed} ชิ้น)`),
+                              borrowDate: detailsModal.borrowDate,
+                              borrowTime: detailsModal.borrowTime,
+                              expectedReturnDate: detailsModal.expectedReturnDate,
+                              expectedReturnTime: detailsModal.expectedReturnTime || '',
+                              borrowType: getBorrowTypeText(detailsModal.borrowType)
+                            })
+                          } catch (emailError) {
+                            console.error("Error sending email:", emailError)
+                            // Continue with acknowledgment even if email fails
+                          }
+
                           await logAdminAction({
                             user,
                             action: 'acknowledge',
@@ -704,15 +724,6 @@ export default function BorrowReturnHistory() {
                       className="w-full px-4 py-2 bg-blue-500 text-white font-medium rounded-lg hover:bg-blue-600 transition disabled:bg-gray-300"
                     >
                       {processingId === detailsModal.borrowId ? "ดำเนินการ..." : "✓ รับทราบ"}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEmailBorrowData(detailsModal)
-                        setShowEmailModal(true)
-                      }}
-                      className="w-full px-4 py-2 bg-green-500 text-white font-medium rounded-lg hover:bg-green-600 transition"
-                    >
-                      📧 ส่งอีเมลแจ้งผู้ยืม
                     </button>
                   </div>
                 </div>
