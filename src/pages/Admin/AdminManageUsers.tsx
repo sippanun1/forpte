@@ -69,7 +69,7 @@ export default function AdminManageUsers() {
     )
   })
 
-  const handleDeleteUser = async (userId: string) => {
+  const handleDeleteUser = async (userId: string, userEmail: string) => {
     try {
       // Prevent deleting self
       if (userId === authUser?.uid) {
@@ -110,6 +110,14 @@ export default function AdminManageUsers() {
       const bookingsQuery = query(roomBookingsRef, where('userId', '==', userId))
       const bookingsDocs = await getDocs(bookingsQuery)
       for (const doc of bookingsDocs.docs) {
+        await deleteDoc(doc.ref)
+      }
+
+      // Delete user's emails from mail collection
+      const mailRef = collection(db, 'mail')
+      const mailQuery = query(mailRef, where('to', '==', userEmail))
+      const mailDocs = await getDocs(mailQuery)
+      for (const doc of mailDocs.docs) {
         await deleteDoc(doc.ref)
       }
 
@@ -257,7 +265,7 @@ export default function AdminManageUsers() {
                 ยกเลิก
               </button>
               <button
-                onClick={() => handleDeleteUser(selectedUserId)}
+                onClick={() => handleDeleteUser(selectedUserId, selectedUserEmail)}
                 className="flex-1 px-4 py-2 bg-red-500 text-white font-medium rounded-lg hover:bg-red-600 transition"
               >
                 ยืนยันลบ

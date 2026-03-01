@@ -21,7 +21,7 @@ export default function Register() {
   const [loading, setLoading] = useState(false)
 
   // ⚠️ Change this to your desired email domain(s)
-  const ALLOWED_EMAIL_DOMAINS = ["@gmail.com", "@outlook.com", "@student.chula.ac.th"]
+  const ALLOWED_EMAIL_DOMAINS = ["@gmail.com", "@mail.kmutt.ac.th", "@kmutt.ac.th"]
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value })
