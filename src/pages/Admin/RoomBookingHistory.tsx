@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { collection, getDocs, query, orderBy, updateDoc, doc } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import Header from "../../components/Header"
-import { sendRoomBookingConfirmationToUser } from "../../utils/emailService"
+import { sendRoomBookingConfirmationToUser, sendRoomBookingRejectionToUser } from "../../utils/emailService"
 
 interface RoomBookingRecord {
   id: string
@@ -219,6 +219,15 @@ export default function RoomBookingHistory() {
       return
     }
     try {
+      // Get booking data before updating
+      let bookingData: any = null
+      const bookingsSnapshot = await getDocs(collection(db, "roomBookings"))
+      bookingsSnapshot.forEach((doc) => {
+        if (doc.id === cancelModalBookingId) {
+          bookingData = doc.data()
+        }
+      })
+
       await updateDoc(doc(db, "roomBookings", cancelModalBookingId), {
         status: "cancelled",
         cancellationReason: cancellationReason,
@@ -226,6 +235,24 @@ export default function RoomBookingHistory() {
         cancelledByType: "admin",
         cancelledAt: new Date().toISOString()
       })
+
+      // Send rejection email to user
+      if (bookingData && bookingData.userEmail) {
+        await sendRoomBookingRejectionToUser({
+          adminEmail: import.meta.env.VITE_ADMIN_EMAIL || 'admin@example.com',
+          userEmail: bookingData.userEmail,
+          userName: bookingData.userName || 'ผู้ใช้',
+          roomName: bookingData.roomCode || 'ห้อง',
+          date: bookingData.date || '',
+          startTime: bookingData.startTime || '',
+          endTime: bookingData.endTime || '',
+          people: bookingData.people || 0,
+          objective: bookingData.purpose || '',
+          userId: bookingData.userId || '',
+          rejectionReason: cancellationReason
+        })
+      }
+
       // Refresh the bookings list
       const q = query(collection(db, "roomBookings"), orderBy("date", "desc"))
       const querySnapshot = await getDocs(q)
@@ -261,9 +288,10 @@ export default function RoomBookingHistory() {
       setCancelModalOpen(false)
       setCancelModalBookingId(null)
       setCancellationReason("")
+      alert("ปฏิเสธการจองและส่งอีเมลแจ้งไปให้ผู้ใช้แล้ว")
     } catch (error) {
       console.error("Error cancelling booking:", error)
-      alert("เกิดข้อผิดพลาดในการยกเลิกการจอง")
+      alert("เกิดข้อผิดพลาดในการปฏิเสธการจอง")
     }
   }
 

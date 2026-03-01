@@ -141,3 +141,54 @@ export async function sendRoomBookingConfirmationToUser(data: RoomBookingEmailDa
     }
   }
 }
+
+export async function sendRoomBookingRejectionToUser(data: RoomBookingEmailData & { rejectionReason?: string }): Promise<{ success: boolean; message: string }> {
+  try {
+    await addDoc(collection(db, 'mail'), {
+      to: data.userEmail,
+      message: {
+        subject: `คำขอจองห้องของท่านไม่ได้รับการอนุมัติ`,
+        html: `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+            <h2 style="color: #c62828;">❌ คำขอจองห้องของท่านไม่ได้รับการอนุมัติ</h2>
+            <p>เรียน คุณ ${data.userName}</p>
+            <p>ขออภัยที่แจ้งว่า คำขอจองห้องของท่านในวันที่ <strong>${data.date}</strong> เวลา <strong>${data.startTime} - ${data.endTime}</strong> ไม่ได้รับการอนุมัติ</p>
+            
+            <div style="background-color: #ffebee; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #c62828;">
+              <h3 style="color: #c62828; margin-top: 0;">รายละเอียดการจอง</h3>
+              <p><strong>ชื่อห้อง:</strong> ${data.roomName}</p>
+              <p><strong>วันที่:</strong> ${data.date}</p>
+              <p><strong>เวลา:</strong> ${data.startTime} - ${data.endTime}</p>
+              <p><strong>จำนวนคน:</strong> ${data.people}</p>
+              <p><strong>วัตถุประสงค์:</strong> ${data.objective}</p>
+            </div>
+
+            ${data.rejectionReason ? `
+            <div style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f57c00;">
+              <h3 style="color: #e65100; margin-top: 0;">เหตุผล</h3>
+              <p>${data.rejectionReason}</p>
+            </div>
+            ` : ''}
+
+            <p style="background-color: #e3f2fd; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #1976d2;">
+              กรุณาทำรายการจองใหม่อีกครั้ง หรือติดต่อผู้ดูแลระบบเพื่อสอบถามรายละเอียดเพิ่มเติม
+            </p>
+            
+            <p>ขอบคุณค่ะ/ครับ</p>
+          </div>
+        `
+      }
+    })
+
+    return {
+      success: true,
+      message: 'ส่งอีเมลแจ้งการปฏิเสธสำเร็จแล้ว'
+    }
+  } catch (error) {
+    console.error('Error sending rejection email:', error)
+    return {
+      success: false,
+      message: 'ขออภัย เกิดข้อผิดพลาดในการส่งอีเมล'
+    }
+  }
+}
