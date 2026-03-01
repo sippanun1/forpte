@@ -106,19 +106,24 @@ export async function sendRoomBookingConfirmationToUser(data: RoomBookingEmailDa
     await addDoc(collection(db, 'mail'), {
       to: data.userEmail,
       message: {
-        subject: `ยืนยันการจองห้อง - ${data.roomName}`,
+        subject: `คำขอจองห้องของท่านได้รับการอนุมัติแล้ว`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #333;">✅ ยืนยันการจองห้อง</h2>
-            <div style="background-color: #e8f5e9; padding: 20px; border-radius: 8px; margin: 20px 0;">
+            <h2 style="color: #2e7d32;">✅ คำขอจองห้องของท่านได้รับการอนุมัติแล้ว</h2>
+            <p>เรียน คุณ ${data.userName}</p>
+            <p>คำขอจองห้องของท่านได้รับการอนุมัติเรียบร้อยแล้ว</p>
+            <div style="background-color: #e8f5e9; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #2e7d32;">
+              <h3 style="color: #2e7d32; margin-top: 0;">รายละเอียดการจอง</h3>
               <p><strong>ชื่อห้อง:</strong> ${data.roomName}</p>
               <p><strong>วันที่:</strong> ${data.date}</p>
               <p><strong>เวลา:</strong> ${data.startTime} - ${data.endTime}</p>
               <p><strong>จำนวนคน:</strong> ${data.people}</p>
               <p><strong>วัตถุประสงค์:</strong> ${data.objective}</p>
-              <p><strong>สถานะ:</strong> รอการอนุมัติ</p>
             </div>
-            <p>ขอบคุณที่ใช้บริการของเรา กรุณารอการอนุมัติจากผู้ดูแลระบบ</p>
+            <p style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f57c00;">
+              <strong>⏰ สำคัญ:</strong> กรุณาเข้าใช้ห้องตามเวลาที่กำหนด และดูแลอุปกรณ์ให้เรียบร้อย
+            </p>
+            <p>ขอบคุณที่ใช้บริการของเรา</p>
           </div>
         `
       }
