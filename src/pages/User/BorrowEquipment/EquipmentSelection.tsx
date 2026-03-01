@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { collection, getDocs } from "firebase/firestore"
 import { db } from "../../../firebase/firebase"
 import { useAuth } from "../../../hooks/useAuth"
+import { loadAllEquipment } from "../../../utils/equipmentHelper"
 import shoppingCartIcon from "../../../assets/shoppingcart.svg"
 import type { SelectedEquipment } from "../../../App"
 
@@ -93,61 +94,34 @@ export default function EquipmentSelection({ setCartItems }: EquipmentSelectionP
         })
         setEquipmentTypes(customTypes)
 
-        // Load all equipment where available: true
-        // With new structure (Option A), each serial code is its own document
-        // For consumables: available field must be true AND quantity > 0
-        const querySnapshot = await getDocs(collection(db, "equipment"))
-        const rawList: Equipment[] = []
-        querySnapshot.forEach((doc) => {
-          const data = doc.data()
-          // Only include documents where available is true (only available items can be borrowed)
-          // For consumables with quantity field, also check quantity > 0
-          const isAvailable = data.available === true || (data.category === "consumable" && data.quantity > 0)
-          if (isAvailable) {
-            rawList.push({
-              id: doc.id,
-              name: data.name,
-              category: data.category,
-              quantity: data.category === "consumable" ? (data.quantity || 0) : 1, // For consumables, use actual quantity; for assets, 1 per serial code
-              unit: data.unit || "ชิ้น",
-              picture: data.picture,
-              inStock: true, // If available: true and loaded, it's in stock
-              available: 1, // One unit available
-              serialCode: data.serialCode,
-              equipmentTypes: data.equipmentTypes || [],
-              equipmentSubTypes: data.equipmentSubTypes || []
-            })
-          }
-        })
+        // Load all equipment using new helper (combines equipment collection + new two-collection architecture)
+        const allEquipment = await loadAllEquipment()
         
-        // Group equipment by name for display (multiple serial codes of same equipment)
-        const grouped: { [key: string]: Equipment[] } = {}
-        rawList.forEach((item) => {
-          if (!grouped[item.name]) {
-            grouped[item.name] = []
-          }
-          grouped[item.name].push(item)
-        })
+        // Filter for available items only
+        const availableEquipment = allEquipment
+          .filter(item => {
+            if (item.category === "consumable") {
+              return item.quantity > 0
+            }
+            // For assets, if it has serialCodes array, check if any are available
+            // For now, we'll assume items from loadAllEquipment are in stock
+            return item.quantity > 0
+          })
+          .map(item => ({
+            id: item.id,
+            name: item.name,
+            category: item.category,
+            quantity: item.quantity,
+            unit: item.unit,
+            picture: item.picture,
+            inStock: item.quantity > 0,
+            available: item.quantity,
+            equipmentTypes: item.equipmentTypes,
+            equipmentSubTypes: item.equipmentSubTypes
+          }))
         
-        // Create display list grouping same equipment together
-        const mergedList: Equipment[] = Object.entries(grouped).map(([_name, items]) => {
-          const firstItem = items[0]
-          
-          // For assets: count available serial codes; For consumables: use quantity field
-          const availableCount = firstItem.category === "consumable" 
-            ? (firstItem.quantity || 0)  // Use quantity field for consumables
-            : items.length  // Count serial codes for assets
-          
-          return {
-            ...firstItem,
-            quantity: availableCount,
-            available: availableCount,
-            inStock: availableCount > 0
-          }
-        })
-        
-        setEquipmentData(mergedList)
-        setFilteredEquipment(mergedList)
+        setEquipmentData(availableEquipment)
+        setFilteredEquipment(availableEquipment)
       } catch (error) {
         console.error("Error loading equipment:", error)
       } finally {

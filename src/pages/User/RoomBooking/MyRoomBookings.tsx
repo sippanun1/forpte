@@ -6,6 +6,12 @@ import { useAuth } from "../../../hooks/useAuth"
 import Header from "../../../components/Header"
 import type { ReturnBookingData } from "../../../App"
 
+interface Member {
+  id: string
+  name: string
+  studentId: string
+}
+
 interface RoomBooking {
   id: string
   roomCode: string
@@ -20,6 +26,7 @@ interface RoomBooking {
   endTime: string
   people: number
   purpose: string
+  members?: Member[]
   cancellationReason?: string
   cancelledBy?: string
   cancelledByType?: "admin" | "user"
@@ -77,6 +84,7 @@ export default function MyRoomBookings({ setReturnBookingData }: MyRoomBookingsP
           endTime: data.endTime,
           people: data.people || 0,
           purpose: data.purpose || "",
+          members: data.members || [],
           cancellationReason: data.cancellationReason || "",
           cancelledBy: data.cancelledBy || "",
           cancelledByType: data.cancelledByType || "user",
@@ -381,6 +389,19 @@ export default function MyRoomBookings({ setReturnBookingData }: MyRoomBookingsP
                 <p className="text-gray-600 font-medium">จำนวนคน:</p>
                 <p className="text-gray-800">{selectedBooking.people} คน</p>
               </div>
+              {selectedBooking.members && selectedBooking.members.length > 0 && (
+                <div>
+                  <p className="text-gray-600 font-medium mb-2">สมาชิก:</p>
+                  <div className="space-y-2 bg-gray-50 p-3 rounded-lg">
+                    {selectedBooking.members.map((member, index) => (
+                      <div key={member.id || index} className="text-sm">
+                        <p className="text-gray-700">{index + 1}. {member.name}</p>
+                        <p className="text-gray-600 text-xs">เลขประจำตัว: {member.studentId}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               {selectedBooking.purpose && (
                 <div>
                   <p className="text-gray-600 font-medium">จุดประสงค์:</p>

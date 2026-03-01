@@ -5,6 +5,7 @@ import { db } from "../../../firebase/firebase"
 import Header from "../../../components/Header"
 import { useAuth } from "../../../hooks/useAuth"
 import { logBorrowTransaction } from "../../../utils/borrowReturnLogger"
+import { getAvailableAssetInstances, markAssetInstancesAsBorrowed } from "../../../utils/equipmentHelper"
 import type { SelectedEquipment } from "../../../App"
 
 interface ConfirmSummaryProps {
@@ -71,17 +72,11 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
 
         for (const item of cartItems) {
           if (item.category === "asset") {
-            // Fetch all available equipment documents with the same name (NEW: Option A structure)
-            // Each document is one serial code with available: true flag at document level
-            const q = query(
-              collection(db, "equipment"),
-              where("name", "==", item.name),
-              where("available", "==", true) // Only get available codes
-            )
-            const snapshot = await getDocs(q)
-            const codes: AssetCode[] = snapshot.docs.map((doc) => ({
-              equipmentId: doc.id,
-              code: doc.data().serialCode || doc.id, // Use serialCode if available, fallback to id
+            // Use new helper to get available asset instances from assetInstances collection
+            const availableInstances = await getAvailableAssetInstances(item.name)
+            const codes: AssetCode[] = availableInstances.map((inst) => ({
+              equipmentId: inst.id,  // Now using instance ID from assetInstances collection
+              code: inst.serialCode,
               selected: false
             }))
             
@@ -170,7 +165,7 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
       
       for (const item of cartItems) {
         if (item.category === "consumable") {
-          // For consumables: decrement quantity
+          // For consumables: decrement quantity in equipment collection
           const q = query(collection(db, "equipment"), where("name", "==", item.name))
           const snapshot = await getDocs(q)
           
@@ -183,19 +178,20 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
               available: newQty > 0 // Mark as unavailable if quantity reaches 0
             })
           })
-        } else if (item.category === "asset") {
-          // For assets: mark borrowed serial codes as unavailable
-          const selectedCodes = assetCodesMap.get(item.id)?.filter(c => c.selected) || []
-          
-          selectedCodes.forEach((code) => {
-            batch.update(doc(db, "equipment", code.equipmentId), {
-              available: false // Mark as borrowed/unavailable
-            })
-          })
         }
       }
       
       await batch.commit()
+
+      // For assets: mark borrowed instances as unavailable using new helper
+      for (const item of cartItems) {
+        if (item.category === "asset") {
+          const selectedCodes = assetCodesMap.get(item.id)?.filter(c => c.selected) || []
+          const selectedInstanceIds = selectedCodes.map(c => c.equipmentId)
+          
+          await markAssetInstancesAsBorrowed(selectedInstanceIds)
+        }
+      }
 
       // Navigate to completion page
       navigate('/borrow/completion')

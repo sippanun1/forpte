@@ -8,6 +8,12 @@ import DatePicker from "../../../components/DatePicker"
 import { sendRoomBookingEmailToAdmin } from "../../../utils/emailService"
 import type { BookingData } from "../../../App"
 
+interface Member {
+  id: string
+  name: string
+  studentId: string
+}
+
 interface RoomBookingFormProps {
   bookingData: BookingData | null
   onConfirmBooking: (bookingData: {
@@ -15,6 +21,7 @@ interface RoomBookingFormProps {
     date: string
     time: string
     people: number
+    members: Member[]
     objective: string
   }) => void
 }
@@ -28,7 +35,9 @@ export default function RoomBookingForm({
   const [date, setDate] = useState(bookingData?.selectedDate || "")
   const [startTime, setStartTime] = useState(bookingData?.time?.split(" - ")[0] || "")
   const [endTime, setEndTime] = useState(bookingData?.time?.split(" - ")[1] || "")
-  const [people, setPeople] = useState(1)
+  const [members, setMembers] = useState<Member[]>([
+    { id: "1", name: "", studentId: "" }
+  ])
   const [objective, setObjective] = useState("")
   const [showApprovalModal, setShowApprovalModal] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -88,7 +97,7 @@ export default function RoomBookingForm({
     return times
   }
 
-  // Get available end times (within 2 hours of start time, respecting timeRanges)
+  // Get available end times (within 4 hours of start time, respecting timeRanges)
   const getAvailableEndTimes = () => {
     if (!startTime || !date) return []
     
@@ -98,7 +107,7 @@ export default function RoomBookingForm({
     }
     
     const startHour = getTimeKey(startTime)
-    let maxHour = Math.min(startHour + 2, 23)
+    let maxHour = Math.min(startHour + 4, 23)
     
     // Respect room's timeRanges if available
     if (bookingData?.timeRanges) {
@@ -117,14 +126,21 @@ export default function RoomBookingForm({
     return endTimes
   }
 
-  const handlePeopleIncrease = () => {
-    setPeople(people + 1)
+  const handleAddMember = () => {
+    const newMemberId = (Math.max(...members.map(m => parseInt(m.id)), 0) + 1).toString()
+    setMembers([...members, { id: newMemberId, name: "", studentId: "" }])
   }
 
-  const handlePeopleDecrease = () => {
-    if (people > 1) {
-      setPeople(people - 1)
+  const handleRemoveMember = (id: string) => {
+    if (members.length > 1) {
+      setMembers(members.filter(m => m.id !== id))
     }
+  }
+
+  const handleMemberChange = (id: string, field: 'name' | 'studentId', value: string) => {
+    setMembers(members.map(m => 
+      m.id === id ? { ...m, [field]: value } : m
+    ))
   }
 
   const handleBooking = async () => {
@@ -133,12 +149,19 @@ export default function RoomBookingForm({
       return
     }
 
+    // Validate all members have names and student IDs
+    const invalidMembers = members.some(m => !m.name.trim() || !m.studentId.trim())
+    if (invalidMembers) {
+      alert("กรุณากรอกชื่อและเลขประจำตัวของสมาชิกทั้งหมด")
+      return
+    }
+
     setIsSubmitting(true)
     try {
       // Save to Firebase
       await addDoc(collection(db, "roomBookings"), {
         roomCode: bookingData?.room || "",
-        roomType: "", // Can be enhanced to include room type
+        roomType: "",
         userName: user?.displayName || user?.email || "ผู้ใช้",
         userId: user?.uid || "",
         userEmail: user?.email || "",
@@ -146,12 +169,13 @@ export default function RoomBookingForm({
         startTime: startTime,
         endTime: endTime,
         purpose: objective || "",
-        people: people,
+        people: members.length,
+        members: members,
         status: "pending",
         bookedAt: new Date().toISOString()
       })
 
-      // Send notification to admin only (wait for admin approval to notify user)
+      // Send notification to admin
       const emailData = {
         adminEmail: import.meta.env.VITE_ADMIN_EMAIL || 'admin@example.com',
         userEmail: user?.email || '',
@@ -160,12 +184,12 @@ export default function RoomBookingForm({
         date: date,
         startTime: startTime,
         endTime: endTime,
-        people: people,
+        people: members.length,
+        members: members,
         objective: objective || '-',
         userId: user?.uid || ''
       }
 
-      // Send notification to admin only (user will be notified after admin approval)
       if (user?.email) {
         await sendRoomBookingEmailToAdmin(emailData)
       }
@@ -174,7 +198,8 @@ export default function RoomBookingForm({
         room: bookingData?.room || "",
         date,
         time: `${startTime} - ${endTime}`,
-        people,
+        people: members.length,
+        members: members,
         objective
       })
       setShowApprovalModal(true)
@@ -286,7 +311,7 @@ export default function RoomBookingForm({
               {/* End Time Dropdown */}
               <div className="w-full mb-4">
                 <label className="block text-sm font-medium mb-2" style={{ color: "#595959" }}>
-                  เวลาสิ้นสุด (สูงสุด 2 ชั่วโมง)
+                  เวลาสิ้นสุด (สูงสุด 4 ชั่วโมง)
                 </label>
                 <select
                   value={endTime}
@@ -306,32 +331,59 @@ export default function RoomBookingForm({
             </>
           )}
 
-          {/* Number of People */}
+          {/* Members List */}
           <div className="w-full mb-4">
-            <div className="flex items-center justify-between px-4 py-3 border border-gray-300 rounded-lg bg-white">
-              <span style={{ color: "#595959" }} className="text-sm font-medium">
-                จำนวนผู้เข้า
-              </span>
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={handlePeopleDecrease}
-                  className="w-6 h-6 flex items-center justify-center rounded border border-gray-400 text-lg"
-                  style={{ color: "#595959" }}
-                >
-                  −
-                </button>
-                <span className="w-8 text-center" style={{ color: "#595959" }}>
-                  {people}
-                </span>
-                <button
-                  onClick={handlePeopleIncrease}
-                  className="w-6 h-6 flex items-center justify-center rounded border border-gray-400 text-lg"
-                  style={{ color: "#595959" }}
-                >
-                  +
-                </button>
-              </div>
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-medium" style={{ color: "#595959" }}>
+                สมาชิก
+              </label>
+              <button
+                onClick={handleAddMember}
+                className="text-sm px-3 py-1 rounded text-white font-medium hover:opacity-90 transition"
+                style={{ backgroundColor: "#FF7F50" }}
+              >
+                + เพิ่ม
+              </button>
             </div>
+
+            {members.map((member, index) => (
+              <div key={member.id} className="mb-3 p-3 border border-gray-300 rounded-lg bg-white">
+                {/* Member Number */}
+                <div className="text-xs font-medium mb-2" style={{ color: "#595959" }}>
+                  สมาชิก {index + 1}
+                </div>
+
+                {/* Name Input */}
+                <input
+                  type="text"
+                  placeholder="ชื่อ-นามสกุล"
+                  value={member.name}
+                  onChange={(e) => handleMemberChange(member.id, 'name', e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-2 focus:outline-none"
+                  style={{ color: "#595959" }}
+                />
+
+                {/* Student ID Input */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    placeholder="เลขประจำตัว"
+                    value={member.studentId}
+                    onChange={(e) => handleMemberChange(member.id, 'studentId', e.target.value)}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none"
+                    style={{ color: "#595959" }}
+                  />
+                  {members.length > 1 && (
+                    <button
+                      onClick={() => handleRemoveMember(member.id)}
+                      className="px-3 py-2 border border-red-300 rounded-lg text-red-600 text-sm font-medium hover:bg-red-50 transition"
+                    >
+                      ลบ
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
 
           {/* Objective Input */}
@@ -349,7 +401,8 @@ export default function RoomBookingForm({
           {/* Buttons */}
           <div className="w-full flex gap-3 mb-6">
             {(() => {
-              const isFormComplete = date && startTime && endTime && isDateAvailable(date)
+              const allMembersFilled = members.every(m => m.name.trim() && m.studentId.trim())
+              const isFormComplete = date && startTime && endTime && isDateAvailable(date) && allMembersFilled
               return (
                 <>
                   <button

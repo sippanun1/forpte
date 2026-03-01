@@ -19,6 +19,8 @@ interface RoomBookingRecord {
   purpose: string
   status: "completed" | "cancelled" | "pending" | "approved" | "returned"
   bookedAt: string
+  people?: number
+  members?: Array<{ id: string; name: string; studentId: string }>
   cancellationReason?: string
   cancelledBy?: string
   cancelledByType?: "admin" | "user"
@@ -71,6 +73,8 @@ export default function RoomBookingHistory() {
             purpose: data.purpose || "",
             status: data.status || "upcoming",
             bookedAt: data.bookedAt || "",
+            people: data.people || 0,
+            members: data.members || [],
             cancellationReason: data.cancellationReason || "",
             cancelledBy: data.cancelledBy || "",
             cancelledByType: data.cancelledByType || "user",
@@ -157,6 +161,7 @@ export default function RoomBookingHistory() {
           startTime: bookingData.startTime || '',
           endTime: bookingData.endTime || '',
           people: bookingData.people || 0,
+          members: bookingData.members || [],
           objective: bookingData.purpose || '',
           userId: bookingData.userId || ''
         })
@@ -247,6 +252,7 @@ export default function RoomBookingHistory() {
           startTime: bookingData.startTime || '',
           endTime: bookingData.endTime || '',
           people: bookingData.people || 0,
+          members: bookingData.members || [],
           objective: bookingData.purpose || '',
           userId: bookingData.userId || '',
           rejectionReason: cancellationReason
@@ -273,6 +279,8 @@ export default function RoomBookingHistory() {
           purpose: data.purpose || "",
           status: data.status || "pending",
           bookedAt: data.bookedAt || "",
+          people: data.people || 0,
+          members: data.members || [],
           cancellationReason: data.cancellationReason || "",
           cancelledBy: data.cancelledBy || "",
           cancelledByType: data.cancelledByType || "user",

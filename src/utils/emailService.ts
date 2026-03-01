@@ -1,6 +1,12 @@
 import { addDoc, collection } from 'firebase/firestore'
 import { db } from '../firebase/firebase'
 
+export interface Member {
+  id: string
+  name: string
+  studentId: string
+}
+
 export interface BorrowEmailData {
   userEmail: string
   userName: string
@@ -21,6 +27,7 @@ export interface RoomBookingEmailData {
   startTime: string
   endTime: string
   people: number
+  members?: Member[]
   objective: string
   userId: string
 }
@@ -63,6 +70,13 @@ export async function sendBorrowAcknowledgmentEmail(data: BorrowEmailData): Prom
 // Room Booking Email - Using Firebase Extension
 export async function sendRoomBookingEmailToAdmin(data: RoomBookingEmailData): Promise<{ success: boolean; message: string }> {
   try {
+    // Format members list
+    const membersList = data.members && data.members.length > 0
+      ? data.members
+          .map((member, index) => `<tr><td style="padding: 8px; border-bottom: 1px solid #ddd;">${index + 1}</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">${member.name}</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">${member.studentId}</td></tr>`)
+          .join('')
+      : '<tr><td colspan="3" style="padding: 8px; text-align: center; color: #999;">ยังไม่มีข้อมูลสมาชิก</td></tr>'
+
     await addDoc(collection(db, 'mail'), {
       to: data.adminEmail,
       message: {
@@ -79,9 +93,28 @@ export async function sendRoomBookingEmailToAdmin(data: RoomBookingEmailData): P
               <p><strong>ห้อง:</strong> ${data.roomName}</p>
               <p><strong>วันที่:</strong> ${data.date}</p>
               <p><strong>เวลา:</strong> ${data.startTime} - ${data.endTime}</p>
-              <p><strong>จำนวนคน:</strong> ${data.people}</p>
+              <p><strong>จำนวนคนทั้งหมด:</strong> ${data.people} คน</p>
               <p><strong>วัตถุประสงค์:</strong> ${data.objective}</p>
             </div>
+
+            <h3 style="color: #333; margin-top: 20px;">รายชื่อสมาชิก</h3>
+            <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+              <thead>
+                <tr style="background-color: #FF7F50; color: white;">
+                  <th style="padding: 10px; text-align: left; border-right: 1px solid #ddd;">ลำดับที่</th>
+                  <th style="padding: 10px; text-align: left; border-right: 1px solid #ddd;">ชื่อ-นามสกุล</th>
+                  <th style="padding: 10px; text-align: left;">เลขประจำตัว</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${membersList}
+              </tbody>
+            </table>
+
+            <p style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f57c00;">
+              <strong>⏰ สูงสุด 4 ชั่วโมง:</strong> ระยะเวลาจองห้องสูงสุด 4 ชั่วโมง
+            </p>
+
             <p>กรุณาตรวจสอบและอนุมัติการจองนี้</p>
           </div>
         `
@@ -103,6 +136,13 @@ export async function sendRoomBookingEmailToAdmin(data: RoomBookingEmailData): P
 
 export async function sendRoomBookingConfirmationToUser(data: RoomBookingEmailData): Promise<{ success: boolean; message: string }> {
   try {
+    // Format members list
+    const membersList = data.members && data.members.length > 0
+      ? data.members
+          .map((member, index) => `<tr><td style="padding: 8px; border-bottom: 1px solid #ddd;">${index + 1}</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">${member.name}</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">${member.studentId}</td></tr>`)
+          .join('')
+      : '<tr><td colspan="3" style="padding: 8px; text-align: center; color: #999;">ยังไม่มีข้อมูลสมาชิก</td></tr>'
+
     await addDoc(collection(db, 'mail'), {
       to: data.userEmail,
       message: {
@@ -117,11 +157,26 @@ export async function sendRoomBookingConfirmationToUser(data: RoomBookingEmailDa
               <p><strong>ชื่อห้อง:</strong> ${data.roomName}</p>
               <p><strong>วันที่:</strong> ${data.date}</p>
               <p><strong>เวลา:</strong> ${data.startTime} - ${data.endTime}</p>
-              <p><strong>จำนวนคน:</strong> ${data.people}</p>
+              <p><strong>จำนวนคนทั้งหมด:</strong> ${data.people} คน</p>
               <p><strong>วัตถุประสงค์:</strong> ${data.objective}</p>
             </div>
+
+            <h3 style="color: #2e7d32;">รายชื่อสมาชิก</h3>
+            <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+              <thead>
+                <tr style="background-color: #4CAF50; color: white;">
+                  <th style="padding: 10px; text-align: left; border-right: 1px solid #ddd;">ลำดับที่</th>
+                  <th style="padding: 10px; text-align: left; border-right: 1px solid #ddd;">ชื่อ-นามสกุล</th>
+                  <th style="padding: 10px; text-align: left;">เลขประจำตัว</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${membersList}
+              </tbody>
+            </table>
+
             <p style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f57c00;">
-              <strong>⏰ สำคัญ:</strong> กรุณาเข้าใช้ห้องตามเวลาที่กำหนด และดูแลอุปกรณ์ให้เรียบร้อย
+              <strong>⏰ สำคัญ:</strong> กรุณาเข้าใช้ห้องตามเวลาที่กำหนด (เวลาสูงสุด 4 ชั่วโมง) และดูแลอุปกรณ์ให้เรียบร้อย
             </p>
             <p>ขอบคุณที่ใช้บริการของเรา</p>
           </div>
@@ -144,6 +199,13 @@ export async function sendRoomBookingConfirmationToUser(data: RoomBookingEmailDa
 
 export async function sendRoomBookingRejectionToUser(data: RoomBookingEmailData & { rejectionReason?: string }): Promise<{ success: boolean; message: string }> {
   try {
+    // Format members list
+    const membersList = data.members && data.members.length > 0
+      ? data.members
+          .map((member, index) => `<tr><td style="padding: 8px; border-bottom: 1px solid #ddd;">${index + 1}</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">${member.name}</td><td style="padding: 8px; border-bottom: 1px solid #ddd;">${member.studentId}</td></tr>`)
+          .join('')
+      : '<tr><td colspan="3" style="padding: 8px; text-align: center; color: #999;">ยังไม่มีข้อมูลสมาชิก</td></tr>'
+
     await addDoc(collection(db, 'mail'), {
       to: data.userEmail,
       message: {
@@ -159,9 +221,23 @@ export async function sendRoomBookingRejectionToUser(data: RoomBookingEmailData 
               <p><strong>ชื่อห้อง:</strong> ${data.roomName}</p>
               <p><strong>วันที่:</strong> ${data.date}</p>
               <p><strong>เวลา:</strong> ${data.startTime} - ${data.endTime}</p>
-              <p><strong>จำนวนคน:</strong> ${data.people}</p>
+              <p><strong>จำนวนคนทั้งหมด:</strong> ${data.people} คน</p>
               <p><strong>วัตถุประสงค์:</strong> ${data.objective}</p>
             </div>
+
+            <h3 style="color: #c62828;">รายชื่อสมาชิก</h3>
+            <table style="width: 100%; border-collapse: collapse; margin: 15px 0;">
+              <thead>
+                <tr style="background-color: #ef5350; color: white;">
+                  <th style="padding: 10px; text-align: left; border-right: 1px solid #ddd;">ลำดับที่</th>
+                  <th style="padding: 10px; text-align: left; border-right: 1px solid #ddd;">ชื่อ-นามสกุล</th>
+                  <th style="padding: 10px; text-align: left;">เลขประจำตัว</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${membersList}
+              </tbody>
+            </table>
 
             ${data.rejectionReason ? `
             <div style="background-color: #fff3e0; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid #f57c00;">

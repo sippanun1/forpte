@@ -1,5 +1,6 @@
 import { doc, setDoc, collection, getDoc, updateDoc, query, where, getDocs, writeBatch } from "firebase/firestore"
 import { db } from "../firebase/firebase"
+import { findAssetInstanceBySerialCode, updateAssetInstanceCondition } from "./equipmentHelper"
 import type { User } from "firebase/auth"
 
 export interface BorrowItem {
@@ -117,22 +118,26 @@ export async function logBorrowTransaction(
 
 /**
  * Mark specific asset codes as unavailable (borrowed)
- * NEW STRUCTURE (Option A): Each serial code is its own document
+ * Handles both new assetInstances collection and old equipment collection
  */
 async function markAssetCodesUnavailable(assetCodes: string[]) {
   try {
-    // With new structure, we need to find the documents matching these serial codes
-    // The document ID format is: {equipmentId}-{serialCode}
-    // For now, we'll search for documents with these serial codes
-    
     for (const code of assetCodes) {
-      // Find all documents with this serialCode and set available: false
-      const querySnapshot = await getDocs(
-        query(collection(db, "equipment"), where("serialCode", "==", code))
-      )
+      // First try to find in new assetInstances collection
+      const instance = await findAssetInstanceBySerialCode(code)
       
-      for (const doc of querySnapshot.docs) {
-        await updateDoc(doc.ref, { available: false })
+      if (instance) {
+        // Found in new structure - update assetInstances
+        await updateAssetInstanceCondition(instance.id, instance.condition || "ปกติ", false)
+      } else {
+        // Not in new structure, try old equipment collection (for backward compatibility)
+        const querySnapshot = await getDocs(
+          query(collection(db, "equipment"), where("serialCode", "==", code))
+        )
+        
+        for (const doc of querySnapshot.docs) {
+          await updateDoc(doc.ref, { available: false })
+        }
       }
     }
   } catch (error) {
@@ -142,18 +147,26 @@ async function markAssetCodesUnavailable(assetCodes: string[]) {
 
 /**
  * Mark specific asset codes as available (returned and approved)
- * NEW STRUCTURE (Option A): Each serial code is its own document
+ * Handles both new assetInstances collection and old equipment collection
  */
 async function markAssetCodesAvailable(_equipmentId: string, assetCodes: string[]) {
   try {
-    // With new structure, find documents with these serial codes and set available: true
     for (const code of assetCodes) {
-      const querySnapshot = await getDocs(
-        query(collection(db, "equipment"), where("serialCode", "==", code))
-      )
+      // First try to find in new assetInstances collection
+      const instance = await findAssetInstanceBySerialCode(code)
       
-      for (const doc of querySnapshot.docs) {
-        await updateDoc(doc.ref, { available: true })
+      if (instance) {
+        // Found in new structure - update assetInstances
+        await updateAssetInstanceCondition(instance.id, "ปกติ", true)
+      } else {
+        // Not in new structure, try old equipment collection (for backward compatibility)
+        const querySnapshot = await getDocs(
+          query(collection(db, "equipment"), where("serialCode", "==", code))
+        )
+        
+        for (const doc of querySnapshot.docs) {
+          await updateDoc(doc.ref, { available: true })
+        }
       }
     }
   } catch (error) {

@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom"
 import { collection, getDocs, query, where, updateDoc, doc } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import Header from "../../components/Header"
+import { findAssetInstanceBySerialCode, updateAssetInstanceCondition } from "../../utils/equipmentHelper"
 import type { BorrowTransaction } from "../../utils/borrowReturnLogger"
 
 interface EquipmentConditionData {
@@ -181,25 +182,18 @@ export default function EquipmentConditionReport() {
         
         await updateDoc(docRef, { equipmentItems: updatedItems })
         
-        // If condition changed to "ปกติ", mark the asset code document as available
-        // NEW STRUCTURE (Option A): Each serial code is its own document
-        if (newCondition === "ปกติ" && serialCode) {
+        // If condition changed, update the asset instance in assetInstances collection
+        if (serialCode) {
           try {
-            // Find the equipment document with this serial code and set available: true
-            const equipmentQuery = query(
-              collection(db, "equipment"),
-              where("serialCode", "==", serialCode)
-            )
-            const equipmentSnapshot = await getDocs(equipmentQuery)
+            const assetInstance = await findAssetInstanceBySerialCode(serialCode)
             
-            if (!equipmentSnapshot.empty) {
-              const equipmentDocRef = equipmentSnapshot.docs[0].ref
-              await updateDoc(equipmentDocRef, {
-                available: true
-              })
+            if (assetInstance) {
+              // Determine availability: mark as available if condition is "ปกติ", otherwise mark unavailable
+              const shouldBeAvailable = newCondition === "ปกติ"
+              await updateAssetInstanceCondition(assetInstance.id, newCondition, shouldBeAvailable)
             }
           } catch (error) {
-            console.error("Error updating equipment availability:", error)
+            console.error("Error updating asset instance condition:", error)
           }
         }
         

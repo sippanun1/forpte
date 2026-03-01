@@ -1,10 +1,11 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, writeBatch } from "firebase/firestore"
+import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, writeBatch, query, where } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import Header from "../../components/Header"
 import { useAuth } from "../../hooks/useAuth"
 import { logAdminAction } from "../../utils/adminLogger"
+import { loadAllEquipment, addNewAsset, addAssetStock, addNewConsumable, addConsumableStock, deleteEquipment, updateEquipmentMetadata } from "../../utils/equipmentHelper"
 
 // Low stock threshold for consumables (in units)
 const LOW_STOCK_THRESHOLD = 10
@@ -29,9 +30,16 @@ interface Equipment {
   unit: string
   picture?: string
   serialCode?: string
-  equipmentTypes?: string[]
-  equipmentSubTypes?: string[]
+  equipmentTypes: string[]
+  equipmentSubTypes: string[]
   available?: boolean
+  serialCodes?: { id: string; code: string }[]
+  allIds?: string[]
+  sourceCollection?: 'equipmentMaster' | 'equipment'
+  masterInstancePair?: {
+    masterId: string
+    instanceIds: string[]
+  }
 }
 
 interface AddStockForm {
@@ -86,7 +94,7 @@ export default function AdminManageEquipment() {
   const [showAddStockConfirmModal, setShowAddStockConfirmModal] = useState(false)
   const [showAssetEditModal, setShowAssetEditModal] = useState(false)
   const [assetIdsForItem, setAssetIdsForItem] = useState<string[]>([])
-  const [assetCodesForItem, setAssetCodesForItem] = useState<{ docId: string; serialCode: string }[]>([])
+  const [assetCodesForItem, setAssetCodesForItem] = useState<{ docId: string; serialCode: string; sourceCollection: 'assetInstances' | 'equipment' }[]>([])
   const [selectedAssetIdToDelete, setSelectedAssetIdToDelete] = useState("")
   const [selectedEquipmentId, setSelectedEquipmentId] = useState("")
   const [assetEditNameThai, setAssetEditNameThai] = useState("")
@@ -155,6 +163,20 @@ export default function AdminManageEquipment() {
   const [equipment, setEquipment] = useState<Equipment[]>([])
   const [loading, setLoading] = useState(true)
 
+  // Load equipment from Firestore
+  const loadEquipment = async (skipCache = false) => {
+    try {
+      const equipmentList = await loadAllEquipment(!skipCache)
+      setEquipment(equipmentList as Equipment[])
+      return equipmentList
+    } catch (error) {
+      console.error("Error loading equipment:", error)
+      return []
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Load custom equipment types from Firestore
   useEffect(() => {
     const loadEquipmentTypes = async () => {
@@ -175,29 +197,6 @@ export default function AdminManageEquipment() {
 
   // Load equipment from Firestore on mount
   useEffect(() => {
-    const loadEquipment = async () => {
-      try {
-        const querySnapshot = await getDocs(collection(db, "equipment"))
-        const equipmentList: Equipment[] = []
-        querySnapshot.forEach((doc) => {
-          equipmentList.push({
-            id: doc.id,
-            name: doc.data().name,
-            category: doc.data().category,
-            quantity: doc.data().quantity || (doc.data().serialCode ? 1 : 0), // Default: 1 for assets, 0 for consumables
-            unit: doc.data().unit || "ชิ้น",
-            picture: doc.data().picture,
-            equipmentTypes: doc.data().equipmentTypes || [],
-            equipmentSubTypes: doc.data().equipmentSubTypes || []
-          })
-        })
-        setEquipment(equipmentList)
-      } catch (error) {
-        console.error("Error loading equipment:", error)
-      } finally {
-        setLoading(false)
-      }
-    }
     loadEquipment()
   }, [])
 
@@ -313,50 +312,35 @@ export default function AdminManageEquipment() {
     if (addEquipmentForm.nameThai && addEquipmentForm.quantity) {
       setIsSubmittingEquipment(true)
       try {
+        let equipmentId: string | null = null
+
         if (isAsset) {
-          // Create separate equipment record for each serial code
-          // NEW STRUCTURE (Option A): Each serial code is its own document
-          const newEquipments = addEquipmentForm.ids.map((serialCode) => ({
-            name: `${addEquipmentForm.nameThai}${addEquipmentForm.nameEnglish ? ` (${addEquipmentForm.nameEnglish})` : ""}`,
-            serialCode: serialCode,
-            category: addEquipmentForm.category,
-            quantity: 1, // Each asset serial code is 1 unit
-            unit: addEquipmentForm.unit,
-            picture: addEquipmentForm.picture,
-            equipmentTypes: addEquipmentForm.equipmentTypes,
-            equipmentSubTypes: addEquipmentForm.equipmentSubTypes,
-            available: true // New equipment is available
-          }))
-          
-          // Save each to Firestore with auto-generated id
-          for (const equip of newEquipments) {
-            await addDoc(collection(db, "equipment"), equip)
-          }
-          
-          // For state, add the documents back with their auto-generated IDs
-          setEquipment([...equipment, ...newEquipments.map((e, idx) => ({
-            ...e,
-            id: `asset-${Date.now()}-${idx}`,
-            quantity: 1
-          }))])
+          // Use new two-collection approach
+          equipmentId = await addNewAsset(
+            addEquipmentForm.nameThai,
+            addEquipmentForm.nameEnglish,
+            addEquipmentForm.ids,
+            addEquipmentForm.unit,
+            addEquipmentForm.equipmentTypes,
+            addEquipmentForm.equipmentSubTypes,
+            addEquipmentForm.picture
+          )
         } else {
-          // For consumables, create single record
-          const newEquipment: Equipment = {
-            id: `${addEquipmentForm.category}-${Date.now()}`,
-            name: `${addEquipmentForm.nameThai}${addEquipmentForm.nameEnglish ? ` (${addEquipmentForm.nameEnglish})` : ""}`,
-            category: addEquipmentForm.category,
-            quantity: parseInt(addEquipmentForm.quantity),
-            unit: addEquipmentForm.unit,
-            picture: addEquipmentForm.picture,
-            equipmentTypes: addEquipmentForm.equipmentTypes,
-            equipmentSubTypes: addEquipmentForm.equipmentSubTypes,
-            available: true // Consumables are available when created
-          }
-          
-          // Save to Firestore
-          await addDoc(collection(db, "equipment"), newEquipment)
-          
-          setEquipment([...equipment, newEquipment])
+          // Use new consumable helper
+          equipmentId = await addNewConsumable(
+            addEquipmentForm.nameThai,
+            addEquipmentForm.nameEnglish,
+            parseInt(addEquipmentForm.quantity),
+            addEquipmentForm.unit,
+            addEquipmentForm.equipmentTypes,
+            addEquipmentForm.equipmentSubTypes,
+            addEquipmentForm.picture
+          )
+        }
+
+        if (!equipmentId) {
+          alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล")
+          return
         }
         
         // Log admin action
@@ -369,6 +353,9 @@ export default function AdminManageEquipment() {
             details: `Category: ${addEquipmentForm.category === 'consumable' ? 'วัสดุสิ้นเปลือง' : 'ครุภัณฑ์'}, Type: ${addEquipmentForm.equipmentTypes?.join(', ') || 'N/A'}${addEquipmentForm.equipmentSubTypes?.length ? ` (${addEquipmentForm.equipmentSubTypes.join(', ')})` : ''}, Quantity: ${addEquipmentForm.quantity}`
           })
         }
+
+        // Refresh the equipment list immediately (skip cache to get fresh data)
+        await loadEquipment(true)
         
         setShowAddEquipmentModal(false)
         setSuccessMessage("เพิ่มอุปกรณ์ใหม่สำเร็จ!")
@@ -390,19 +377,39 @@ export default function AdminManageEquipment() {
       setAssetIdsForItem(itemAllIds)
       setSelectedEquipmentId(equipmentName)
       
-      // Fetch full equipment data to get serialCodes
+      // Fetch full equipment data to get serialCodes from assetInstances (new structure)
       try {
-        const querySnapshot = await getDocs(collection(db, "equipment"))
-        const codes: { docId: string; serialCode: string }[] = []
+        // Check both assetInstances (new) and equipment (old) collections
+        const [assetInstancesSnap, equipmentSnap] = await Promise.all([
+          getDocs(collection(db, "assetInstances")),
+          getDocs(collection(db, "equipment"))
+        ])
         
-        querySnapshot.forEach((docSnap) => {
+        const codes: { docId: string; serialCode: string; sourceCollection: 'assetInstances' | 'equipment' }[] = []
+        
+        // Check assetInstances first (new structure)
+        assetInstancesSnap.forEach((docSnap) => {
           if (itemAllIds.includes(docSnap.id)) {
             codes.push({
               docId: docSnap.id,
-              serialCode: docSnap.data().serialCode || docSnap.id
+              serialCode: docSnap.data().serialCode || docSnap.id,
+              sourceCollection: 'assetInstances'
             })
           }
         })
+        
+        // Fallback to equipment collection if needed (backward compatibility)
+        if (codes.length === 0) {
+          equipmentSnap.forEach((docSnap) => {
+            if (itemAllIds.includes(docSnap.id)) {
+              codes.push({
+                docId: docSnap.id,
+                serialCode: docSnap.data().serialCode || docSnap.id,
+                sourceCollection: 'equipment'
+              })
+            }
+          })
+        }
         
         setAssetCodesForItem(codes)
       } catch (error) {
@@ -465,20 +472,23 @@ export default function AdminManageEquipment() {
     const fullName = editForm.nameEnglish ? `${editForm.nameThai} (${editForm.nameEnglish})` : editForm.nameThai
     
     try {
-      // Find and update in Firestore by Firestore document ID
-      const querySnapshot = await getDocs(collection(db, "equipment"))
-      for (const docSnap of querySnapshot.docs) {
-        if (docSnap.id === editForm.id) {
-          await updateDoc(doc(db, "equipment", docSnap.id), {
-            name: fullName,
-            quantity: parseInt(editForm.quantity) || 0,
-            unit: editForm.unit,
-            picture: editForm.picture,
-            equipmentTypes: editForm.equipmentTypes,
-            equipmentSubTypes: editForm.equipmentSubTypes
-          })
-          break
-        }
+      const itemToUpdate = equipment.find(e => e.id === editForm.id)
+      if (!itemToUpdate) {
+        throw new Error("Equipment not found")
+      }
+
+      // Use new updateEquipmentMetadata helper that handles both collections
+      const success = await updateEquipmentMetadata(itemToUpdate, {
+        name: fullName,
+        quantity: parseInt(editForm.quantity) || 0,
+        unit: editForm.unit,
+        picture: editForm.picture,
+        equipmentTypes: editForm.equipmentTypes,
+        equipmentSubTypes: editForm.equipmentSubTypes
+      })
+
+      if (!success) {
+        throw new Error("Failed to update equipment")
       }
       
       setEquipment(equipment.map(item =>
@@ -658,12 +668,13 @@ export default function AdminManageEquipment() {
 
   const handleAssetCodeDeleteConfirm = async () => {
     try {
-      // Find the serialCode for logging
+      // Delete from the correct collection based on sourceCollection
       const deletedCode = assetCodesForItem.find(c => c.docId === assetCodeToDelete)
       const deletedSerialCode = deletedCode?.serialCode || assetCodeToDelete
+      const sourceCollection = deletedCode?.sourceCollection || 'equipment'
       
-      // Delete from Firestore using document ID
-      await deleteDoc(doc(db, "equipment", assetCodeToDelete))
+      // Delete from Firestore using document ID and correct collection
+      await deleteDoc(doc(db, sourceCollection, assetCodeToDelete))
       
       // Update assetCodesForItem
       const updatedCodes = assetCodesForItem.filter(c => c.docId !== assetCodeToDelete)
@@ -707,10 +718,11 @@ export default function AdminManageEquipment() {
 
   const handleAssetDeleteAllConfirm = async () => {
     try {
-      // Delete all from Firestore using docIds from assetCodesForItem
+      // Delete all from Firestore using correct collections
       const batch = writeBatch(db)
       for (const codeItem of assetCodesForItem) {
-        batch.delete(doc(db, "equipment", codeItem.docId))
+        // Delete from the correct collection based on sourceCollection
+        batch.delete(doc(db, codeItem.sourceCollection, codeItem.docId))
       }
       await batch.commit()
       
@@ -752,20 +764,38 @@ export default function AdminManageEquipment() {
       : assetEditNameThai
     
     try {
-      // Update in Firestore
-      const querySnapshot = await getDocs(collection(db, "equipment"))
-      const batch = writeBatch(db)
-      for (const docSnap of querySnapshot.docs) {
-        if (docSnap.data().name === selectedEquipmentId) {
-          batch.update(doc(db, "equipment", docSnap.id), {
-            name: newFullName,
+      // Update in Firestore - need to update master for asset names, instances for metadata
+      // For simplicity, we'll update the equipment master by name
+      const masterQuery = query(collection(db, 'equipmentMaster'), where('name', '==', selectedEquipmentId))
+      const masterSnapshot = await getDocs(masterQuery)
+      
+      // If master exists, update it (new structure)
+      if (!masterSnapshot.empty) {
+        const batch = writeBatch(db)
+        for (const docSnap of masterSnapshot.docs) {
+          batch.update(doc(db, 'equipmentMaster', docSnap.id), {
             picture: assetEditPicture,
             equipmentTypes: assetEditTypes,
             equipmentSubTypes: assetEditSubTypes
           })
         }
+        await batch.commit()
+      } else {
+        // Fallback: update from equipment collection (old structure)
+        const equipmentSnapshot = await getDocs(collection(db, "equipment"))
+        const batch = writeBatch(db)
+        for (const docSnap of equipmentSnapshot.docs) {
+          if (docSnap.data().name === selectedEquipmentId) {
+            batch.update(doc(db, "equipment", docSnap.id), {
+              name: newFullName,
+              picture: assetEditPicture,
+              equipmentTypes: assetEditTypes,
+              equipmentSubTypes: assetEditSubTypes
+            })
+          }
+        }
+        await batch.commit()
       }
-      await batch.commit()
       
       // Update name, picture, type and subtype for all assets with same name
       const updatedEquipment = equipment.map(item => {
@@ -833,29 +863,30 @@ export default function AdminManageEquipment() {
   }
 
   const handleDeleteConfirm = async () => {
-    const deletedEquipment = equipment.find(item => item.id === selectedAssetIdToDelete || item.id === selectedEquipmentId)
-    const idToDelete = selectedAssetIdToDelete || selectedEquipmentId
+    const itemToDelete = equipment.find(item => item.id === selectedAssetIdToDelete || item.id === selectedEquipmentId)
     
     try {
-      // Delete from Firestore using Firestore document ID
-      const querySnapshot = await getDocs(collection(db, "equipment"))
-      for (const docSnap of querySnapshot.docs) {
-        if (docSnap.id === idToDelete) {
-          await deleteDoc(doc(db, "equipment", docSnap.id))
-          break
-        }
+      if (!itemToDelete) {
+        throw new Error("Equipment not found")
+      }
+
+      // Use new deleteEquipment helper that handles both collections
+      const success = await deleteEquipment(itemToDelete)
+      
+      if (!success) {
+        throw new Error("Failed to delete equipment")
       }
       
-      setEquipment(equipment.filter(item => item.id !== idToDelete))
+      setEquipment(equipment.filter(item => item.id !== (selectedAssetIdToDelete || selectedEquipmentId)))
       
       // Log admin action
-      if (user && deletedEquipment) {
+      if (user && itemToDelete) {
         logAdminAction({
           user,
           action: 'delete',
           type: 'equipment',
-          itemName: deletedEquipment.name,
-          details: `Category: ${deletedEquipment.category === 'consumable' ? 'วัสดุสิ้นเปลือง' : 'ครุภัณฑ์'}, ID: ${idToDelete}, Quantity was: ${deletedEquipment.quantity}`
+          itemName: itemToDelete.name,
+          details: `Category: ${itemToDelete.category === 'consumable' ? 'วัสดุสิ้นเปลือง' : 'ครุภัณฑ์'}, Quantity was: ${itemToDelete.quantity}`
         })
       }
       
@@ -924,58 +955,27 @@ export default function AdminManageEquipment() {
     if (isSubmittingStock) return
     
     const isAsset = addStockForm.equipmentCategory === "asset"
-    const existingUnit = equipment.find(e => e.name === addStockForm.equipmentName)?.unit || "ชิ้น"
     
     setIsSubmittingStock(true)
     try {
+      let success = false
+
       if (isAsset) {
-        // Add each asset as a separate equipment record with serialCode
-        // NEW STRUCTURE (Option A): Each serial code is its own document
-        const newEquipments = addStockForm.assetIds.map((serialCode) => ({
-          name: addStockForm.equipmentName,
-          serialCode: serialCode,
-          category: addStockForm.equipmentCategory,
-          quantity: 1, // Each asset serial code is 1 unit
-          unit: existingUnit,
-          available: true // New stock is available
-        }))
-        
-        // Save each to Firestore with auto-generated id
-        for (const equip of newEquipments) {
-          await addDoc(collection(db, "equipment"), equip)
-        }
-        
-        setEquipment([...equipment, ...newEquipments.map((e, idx) => ({
-          ...e,
-          id: `asset-${Date.now()}-${idx}`,
-          quantity: 1
-        }))])
+        // Use new asset stock helper
+        success = await addAssetStock(addStockForm.equipmentName, addStockForm.assetIds)
       } else {
-        // For consumables, just add to quantity
-        const newQuantity = (equipment.find(item => item.id === addStockForm.equipmentId)?.quantity || 0) + parseInt(addStockForm.quantity)
-        
-        // Update in Firestore using Firestore document ID
-        const querySnapshot = await getDocs(collection(db, "equipment"))
-        for (const docSnap of querySnapshot.docs) {
-          if (docSnap.id === addStockForm.equipmentId) {
-            await updateDoc(doc(db, "equipment", docSnap.id), {
-              quantity: newQuantity,
-              available: true // Ensure consumable is marked available
-            })
-            break
-          }
-        }
-        
-        setEquipment(equipment.map(item =>
-          item.id === addStockForm.equipmentId
-            ? { ...item, quantity: item.quantity + parseInt(addStockForm.quantity) }
-            : item
-        ))
+        // Use new consumable stock helper
+        success = await addConsumableStock(addStockForm.equipmentId, parseInt(addStockForm.quantity))
+      }
+
+      if (!success) {
+        throw new Error("Failed to add stock")
       }
       
       // Log admin action for adding stock
       if (user) {
         const isAssetCategory = addStockForm.equipmentCategory === "asset"
+        const existingUnit = equipment.find(e => e.name === addStockForm.equipmentName)?.unit || "ชิ้น"
         logAdminAction({
           user,
           action: 'update',
@@ -986,6 +986,9 @@ export default function AdminManageEquipment() {
             : `เพิ่มสต๊อก: +${addStockForm.quantity} ${existingUnit}`
         })
       }
+
+      // Refresh the equipment list immediately (skip cache to get fresh data)
+      await loadEquipment(true)
       
       setShowAddStockConfirmModal(false)
       setSuccessMessage("เพิ่มสต๊อกสำเร็จ!")
@@ -1966,8 +1969,8 @@ export default function AdminManageEquipment() {
                                   // Save the edit
                                   if (editingCodeValue.trim() && editingCodeValue !== codeItem.serialCode) {
                                     try {
-                                      // Update serialCode in Firestore
-                                      await updateDoc(doc(db, "equipment", codeItem.docId), {
+                                      // Update from correct collection based on sourceCollection
+                                      await updateDoc(doc(db, codeItem.sourceCollection, codeItem.docId), {
                                         serialCode: editingCodeValue.trim()
                                       })
                                       
