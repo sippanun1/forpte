@@ -20,6 +20,9 @@ export default function Register() {
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
 
+  // ⚠️ Change this to your desired email domain(s)
+  const ALLOWED_EMAIL_DOMAINS = ["@gmail.com", "@outlook.com", "@student.chula.ac.th"]
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm({ ...form, [e.target.name]: e.target.value })
     setError("")
@@ -34,6 +37,16 @@ export default function Register() {
     if (!form.fullName || !form.idNumber || !form.undergraduateYears || 
         !form.email || !form.password || !form.confirmPassword) {
       setError("กรุณากรอกข้อมูลให้ครบถ้วน")
+      setLoading(false)
+      return
+    }
+
+    // Validate email domain
+    const hasValidDomain = ALLOWED_EMAIL_DOMAINS.some(domain => 
+      form.email.toLowerCase().endsWith(domain)
+    )
+    if (!hasValidDomain) {
+      setError(`อีเมลต้องลงท้ายด้วย ${ALLOWED_EMAIL_DOMAINS.join(" หรือ ")}`)
       setLoading(false)
       return
     }
