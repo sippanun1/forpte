@@ -7,7 +7,7 @@ import Header from "../components/Header"
 
 export default function Home() {
   const navigate = useNavigate()
-  const { user: _user } = useAuth()
+  const { user } = useAuth()
   const [currentDate, setCurrentDate] = useState<string>("")
   const [currentTime, setCurrentTime] = useState<string>("")
 
@@ -68,7 +68,7 @@ export default function Home() {
 
           {/* Username */}
           <div className="w-full text-gray-600 text-sm mb-6">
-            User (ชื่อ-สกุล)
+            {user?.displayName || 'User'}
           </div>
 
 
