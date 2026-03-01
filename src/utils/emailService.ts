@@ -66,10 +66,12 @@ export async function sendRoomBookingEmailToAdmin(data: RoomBookingEmailData): P
     await addDoc(collection(db, 'mail'), {
       to: data.adminEmail,
       message: {
-        subject: `🎉 มีการจองห้องใหม่ - ${data.roomName}`,
+        subject: `มีคำขอจองห้องใหม่รอการอนุมัติ - ${data.roomName}`,
         html: `
           <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #333;">📋 การจองห้องใหม่</h2>
+            <h2 style="color: #333;">📋 มีคำขอจองห้องใหม่รอการอนุมัติ</h2>
+            <p>เรียน ผู้ดูแลระบบ</p>
+            <p>มีคำขอจองห้องใหม่เข้าสู่ระบบ กรุณาตรวจสอบรายละเอียดด้านล่าง:</p>
             <div style="background-color: #f5f5f5; padding: 20px; border-radius: 8px; margin: 20px 0;">
               <p><strong>ชื่อผู้ใช้:</strong> ${data.userName}</p>
               <p><strong>อีเมล:</strong> ${data.userEmail}</p>
