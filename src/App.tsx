@@ -44,8 +44,8 @@ export interface Equipment {
   available: number
   code?: string
   serialCode?: string
-  equipmentType?: string
-  equipmentSubType?: string
+  equipmentTypes?: string[]
+  equipmentSubTypes?: string[]
 }
 
 export interface SelectedEquipment extends Equipment {

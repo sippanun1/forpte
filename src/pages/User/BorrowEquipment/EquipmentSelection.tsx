@@ -28,8 +28,8 @@ interface Equipment {
   inStock: boolean
   available: number
   serialCode?: string
-  equipmentType?: string
-  equipmentSubType?: string
+  equipmentTypes?: string[]
+  equipmentSubTypes?: string[]
 }
 
 interface EquipmentSelectionProps {
@@ -114,8 +114,8 @@ export default function EquipmentSelection({ setCartItems }: EquipmentSelectionP
               inStock: true, // If available: true and loaded, it's in stock
               available: 1, // One unit available
               serialCode: data.serialCode,
-              equipmentType: data.equipmentType || "",
-              equipmentSubType: data.equipmentSubType || ""
+              equipmentTypes: data.equipmentTypes || [],
+              equipmentSubTypes: data.equipmentSubTypes || []
             })
           }
         })
@@ -162,11 +162,11 @@ export default function EquipmentSelection({ setCartItems }: EquipmentSelectionP
 
     // Filter by type
     if (selectedType !== "ทั้งหมด") {
-      filtered = filtered.filter(item => item.equipmentType === selectedType)
+      filtered = filtered.filter(item => item.equipmentTypes?.includes(selectedType))
       
       // Filter by subtype if selected
       if (selectedSubType !== "ทั้งหมด") {
-        filtered = filtered.filter(item => item.equipmentSubType === selectedSubType)
+        filtered = filtered.filter(item => item.equipmentSubTypes?.includes(selectedSubType))
       }
     }
 
@@ -509,10 +509,10 @@ export default function EquipmentSelection({ setCartItems }: EquipmentSelectionP
 
                   {/* Type */}
                   <div className="text-xs text-gray-500 mb-2">
-                    {item.equipmentType ? (
+                    {item.equipmentTypes?.length ? (
                       <>
-                        {item.equipmentType}
-                        {item.equipmentSubType && ` (${item.equipmentSubType})`}
+                        {item.equipmentTypes.join(", ")}
+                        {item.equipmentSubTypes?.length && ` (${item.equipmentSubTypes.join(", ")})`}
                       </>
                     ) : (
                       "ไม่ระบุประเภท"

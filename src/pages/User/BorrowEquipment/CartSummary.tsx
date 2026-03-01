@@ -175,10 +175,10 @@ export default function CartSummary({ cartItems, setCartItems }: CartSummaryProp
                         {item.name}
                       </h3>
                       <p className="text-xs text-green-600 font-medium mt-1">
-                        {item.equipmentType ? (
+                        {item.equipmentTypes?.length ? (
                           <>
-                            {item.equipmentType}
-                            {item.equipmentSubType && ` (${item.equipmentSubType})`}
+                            {item.equipmentTypes.join(", ")}
+                            {item.equipmentSubTypes?.length && ` (${item.equipmentSubTypes.join(", ")})`}
                           </>
                         ) : (
                           "ไม่ระบุประเภท"

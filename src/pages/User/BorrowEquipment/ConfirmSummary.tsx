@@ -287,10 +287,10 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
                       <div>
                         <h4 className="text-sm font-medium text-gray-800">{item.name}</h4>
                         <p className="text-xs text-green-600 font-medium">
-                          {item.equipmentType ? (
+                          {item.equipmentTypes?.length ? (
                             <>
-                              {item.equipmentType}
-                              {item.equipmentSubType && ` (${item.equipmentSubType})`}
+                              {item.equipmentTypes.join(", ")}
+                              {item.equipmentSubTypes?.length && ` (${item.equipmentSubTypes.join(", ")})`}
                             </>
                           ) : (
                             "ไม่ระบุประเภท"

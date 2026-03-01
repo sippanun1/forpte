@@ -114,7 +114,14 @@ export default function CompletionPage({ cartItems, setCartItems }: CompletionPa
                   <div>
                     <h4 className="text-sm font-semibold text-gray-800">{item.name}</h4>
                     <p className="text-xs text-green-600 font-medium mt-1">
-                      {item.equipmentType}{item.equipmentSubType ? ` - ${item.equipmentSubType}` : ""}
+                      {item.equipmentTypes?.length ? (
+                        <>
+                          {item.equipmentTypes.join(", ")}
+                          {item.equipmentSubTypes?.length && ` - ${item.equipmentSubTypes.join(", ")}`}
+                        </>
+                      ) : (
+                        "ไม่ระบุประเภท"
+                      )}
                     </p>
                   </div>
                   <div className="text-right">
