@@ -19,8 +19,6 @@ export default function AdminHistory() {
   const navigate = useNavigate()
   const [actions, setActions] = useState<AdminAction[]>([])
   const [loading, setLoading] = useState(true)
-  const [currentPage, setCurrentPage] = useState(1)
-  const [hasMore, setHasMore] = useState(true)
   const PAGE_SIZE = 50
   const [selectedType, setSelectedType] = useState<'all' | 'equipment' | 'room'>('all')
   const [searchTerm, setSearchTerm] = useState('')
@@ -44,17 +42,17 @@ export default function AdminHistory() {
         const querySnapshot = await getDocs(q)
         
         const actionsList: AdminAction[] = []
-        querySnapshot.forEach((doc, index) => {
+        let index = 0
+        querySnapshot.forEach((doc) => {
           if (index < PAGE_SIZE) {
             actionsList.push({
               id: doc.id,
               ...doc.data()
             } as AdminAction)
           }
+          index++
         })
         
-        // Check if there are more records
-        setHasMore(querySnapshot.size > PAGE_SIZE)
         setActions(actionsList)
       } catch (error) {
         console.error('Error fetching admin actions:', error)
