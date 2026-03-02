@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { collection, getDocs } from "firebase/firestore"
+import { collection, getDocs, query, where } from "firebase/firestore"
 import { db } from "../../../firebase/firebase"
 import { useAuth } from "../../../hooks/useAuth"
 import Header from "../../../components/Header"
@@ -90,22 +90,27 @@ export default function RoomAvailability({ setBookingData }: RoomAvailabilityPro
           roomMap[doc.id] = room
         })
 
-        // Get bookings for selected date
-        const bookingsSnapshot = await getDocs(collection(db, "roomBookings"))
+        // Get bookings for selected date (optimized with WHERE clause)
         const selectedDateStr = selectedDate.toISOString().split("T")[0]
+        const bookingsQuery = query(
+          collection(db, "roomBookings"),
+          where("date", "==", selectedDateStr)
+        )
+        const bookingsSnapshot = await getDocs(bookingsQuery)
         const bookingsByRoomDate: { [key: string]: RoomBooking[] } = {}
 
         bookingsSnapshot.forEach((doc) => {
           const data = doc.data() as RoomBooking
-          if (data.date === selectedDateStr && data.status !== "cancelled") {
-            // Match by roomCode since that's what's stored in bookings
-            const key = data.roomCode || ""
-            if (key && !bookingsByRoomDate[key]) {
-              bookingsByRoomDate[key] = []
-            }
-            if (key) {
-              bookingsByRoomDate[key].push(data)
-            }
+          // Skip cancelled bookings
+          if (data.status === "cancelled") return
+          
+          // Match by roomCode since that's what's stored in bookings
+          const key = data.roomCode || ""
+          if (key && !bookingsByRoomDate[key]) {
+            bookingsByRoomDate[key] = []
+          }
+          if (key) {
+            bookingsByRoomDate[key].push(data)
           }
         })
 
@@ -401,7 +406,9 @@ export default function RoomAvailability({ setBookingData }: RoomAvailabilityPro
                                 ? "#FF4444" 
                                 : slot.status === 'userBooked'
                                 ? "#FF7F50"
-                                : "#999999"
+                                : "#999999",
+                              pointerEvents: slot.status !== 'available' ? 'none' : 'auto',
+                              opacity: slot.status !== 'available' ? 0.6 : 1
                             }}
                             title={
                               slot.status === 'userBooked'

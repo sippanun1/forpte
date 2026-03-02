@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { collection, getDocs, query, orderBy, updateDoc, doc } from "firebase/firestore"
+import { collection, getDocs, query, orderBy, updateDoc, doc, limit } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import Header from "../../components/Header"
 import { sendRoomBookingConfirmationToUser, sendRoomBookingRejectionToUser } from "../../utils/emailService"
@@ -43,6 +43,7 @@ export default function RoomBookingHistory() {
   const [showFilters, setShowFilters] = useState(false)
   const [bookingHistory, setBookingHistory] = useState<RoomBookingRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const PAGE_SIZE = 50
   const [cancelModalOpen, setCancelModalOpen] = useState(false)
   const [cancelModalBookingId, setCancelModalBookingId] = useState<string | null>(null)
   const [cancellationReason, setCancellationReason] = useState("")
@@ -54,38 +55,50 @@ export default function RoomBookingHistory() {
   useEffect(() => {
     const loadBookingHistory = async () => {
       try {
-        const q = query(collection(db, "roomBookings"), orderBy("date", "desc"))
+        // Load one extra to check if there are more records
+        const q = query(
+          collection(db, "roomBookings"),
+          orderBy("date", "desc"),
+          limit(PAGE_SIZE + 1)
+        )
         const querySnapshot = await getDocs(q)
         const records: RoomBookingRecord[] = []
+        let index = 0
+        
         querySnapshot.forEach((doc) => {
-          const data = doc.data()
-          records.push({
-            id: doc.id,
-            roomCode: data.roomCode || "",
-            roomName: data.roomCode || "",
-            roomType: data.roomType || "",
-            userName: data.userName || "",
-            userId: data.userId || "",
-            userEmail: data.userEmail || "",
-            date: data.date || "",
-            startTime: data.startTime || "",
-            endTime: data.endTime || "",
-            purpose: data.purpose || "",
-            status: data.status || "upcoming",
-            bookedAt: data.bookedAt || "",
-            people: data.people || 0,
-            members: data.members || [],
-            cancellationReason: data.cancellationReason || "",
-            cancelledBy: data.cancelledBy || "",
-            cancelledByType: data.cancelledByType || "user",
-            cancelledAt: data.cancelledAt || "",
-            roomCondition: data.roomCondition || "",
-            equipmentCondition: data.equipmentCondition || "",
-            returnNotes: data.returnNotes || "",
-            returnedAt: data.returnedAt || "",
-            pictures: data.pictures || []
-          })
+          // Only process up to PAGE_SIZE records
+          if (index < PAGE_SIZE) {
+            const data = doc.data()
+            records.push({
+              id: doc.id,
+              roomCode: data.roomCode || "",
+              roomName: data.roomCode || "",
+              roomType: data.roomType || "",
+              userName: data.userName || "",
+              userId: data.userId || "",
+              userEmail: data.userEmail || "",
+              date: data.date || "",
+              startTime: data.startTime || "",
+              endTime: data.endTime || "",
+              purpose: data.purpose || "",
+              status: data.status || "upcoming",
+              bookedAt: data.bookedAt || "",
+              people: data.people || 0,
+              members: data.members || [],
+              cancellationReason: data.cancellationReason || "",
+              cancelledBy: data.cancelledBy || "",
+              cancelledByType: data.cancelledByType || "user",
+              cancelledAt: data.cancelledAt || "",
+              roomCondition: data.roomCondition || "",
+              equipmentCondition: data.equipmentCondition || "",
+              returnNotes: data.returnNotes || "",
+              returnedAt: data.returnedAt || "",
+              pictures: data.pictures || []
+            })
+          }
+          index++
         })
+        
         setBookingHistory(records)
       } catch (error) {
         console.error("Error loading room booking history:", error)

@@ -1,12 +1,22 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { addDoc, collection } from "firebase/firestore"
+import { addDoc, collection, getDocs, query, where } from "firebase/firestore"
 import { db } from "../../../firebase/firebase"
 import { useAuth } from "../../../hooks/useAuth"
 import Header from "../../../components/Header"
 import DatePicker from "../../../components/DatePicker"
 import { sendRoomBookingEmailToAdmin } from "../../../utils/emailService"
 import type { BookingData } from "../../../App"
+
+// Helper function to normalize dates to YYYY-MM-DD format
+const formatDateString = (date: string | Date): string => {
+  if (typeof date === "string") return date
+  const d = new Date(date)
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, "0")
+  const day = String(d.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
 
 interface Member {
   id: string
@@ -41,6 +51,107 @@ export default function RoomBookingForm({
   const [objective, setObjective] = useState("")
   const [showApprovalModal, setShowApprovalModal] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [bookedTimes, setBookedTimes] = useState<string[]>([])
+  const [bookedPeriods, setBookedPeriods] = useState<Array<{ start: string; end: string }>>([])
+  const [bookedDates, setBookedDates] = useState<string[]>([])
+  const [hasTimeConflict, setHasTimeConflict] = useState(false)
+
+  // Fetch all booked dates for the room (for DatePicker indicator)
+  useEffect(() => {
+    const fetchBookedDates = async () => {
+      if (!bookingData?.room) {
+        setBookedDates([])
+        return
+      }
+
+      try {
+        const q = query(
+          collection(db, "roomBookings"),
+          where("roomCode", "==", bookingData.room)
+        )
+        const snapshot = await getDocs(q)
+        
+        const allDates: string[] = []
+        snapshot.forEach(doc => {
+          const data = doc.data()
+          // Skip cancelled bookings
+          if (data.status === "cancelled") return
+          // Normalize date format to ensure consistency
+          const normalizedDate = formatDateString(data.date)
+          allDates.push(normalizedDate)
+        })
+        
+        const uniqueDates = [...new Set(allDates)]
+        setBookedDates(uniqueDates)
+      } catch (error) {
+        console.error("Error fetching booked dates:", error)
+        setBookedDates([])
+      }
+    }
+
+    fetchBookedDates()
+  }, [bookingData?.room])
+
+  // Fetch booked times for selected date and room
+  useEffect(() => {
+    const fetchBookedTimes = async () => {
+      if (!date || !bookingData?.room) {
+        setBookedTimes([])
+        return
+      }
+
+      try {
+        const q = query(
+          collection(db, "roomBookings"),
+          where("roomCode", "==", bookingData.room),
+          where("date", "==", date)
+        )
+        const snapshot = await getDocs(q)
+        
+        const booked: string[] = []
+        const periods: Array<{ start: string; end: string }> = []
+        snapshot.forEach(doc => {
+          const data = doc.data()
+          // Skip cancelled bookings
+          if (data.status === "cancelled") return
+          
+          // Store the period (for end time filtering)
+          periods.push({ start: data.startTime, end: data.endTime })
+          
+          const startHour = parseInt(data.startTime.split(':')[0])
+          const endHour = parseInt(data.endTime.split(':')[0])
+          
+          // Mark all hours in the booked time range as unavailable FOR STARTING
+          for (let hour = startHour; hour < endHour; hour++) {
+            const timeStr = formatTime(hour)
+            if (!booked.includes(timeStr)) {
+              booked.push(timeStr)
+            }
+          }
+        })
+        
+        setBookedTimes(booked)
+        
+        // Sort periods by start time
+        const sortedPeriods = periods.sort((a, b) => a.start.localeCompare(b.start))
+        setBookedPeriods(sortedPeriods)
+        
+        // Check if current start time conflicts
+        if (startTime && booked.includes(startTime)) {
+          setHasTimeConflict(true)
+        } else {
+          setHasTimeConflict(false)
+        }
+      } catch (error) {
+        console.error("Error fetching booked times:", error)
+        setBookedTimes([])
+        setBookedPeriods([])
+        setHasTimeConflict(false)
+      }
+    }
+
+    fetchBookedTimes()
+  }, [date, bookingData?.room])
 
   // Format time key from "HH:00" format
   const getTimeKey = (time: string) => {
@@ -67,26 +178,34 @@ export default function RoomBookingForm({
     return bookingData.usageDays[dayKey] ?? false
   }
 
-  // Get available start times from slots or generate based on timeRanges
-  const availableStartTimes = bookingData?.availableSlots && bookingData.availableSlots.length > 0
-    ? bookingData.availableSlots.filter(slot => slot.available).map(slot => slot.time)
-    : (() => {
-        // Check if the selected date is available
-        if (!date || !isDateAvailable(date)) {
-          return [] // No times available for unavailable days
+  // Get available start times from slots or generate based on timeRanges (excluding booked times)
+  const availableStartTimes = (() => {
+    let times: string[] = []
+    
+    if (bookingData?.availableSlots && bookingData.availableSlots.length > 0) {
+      times = bookingData.availableSlots.filter(slot => slot.available).map(slot => slot.time)
+    } else {
+      // Check if the selected date is available
+      if (!date || !isDateAvailable(date)) {
+        return [] // No times available for unavailable days
+      }
+      
+      if (bookingData?.timeRanges) {
+        const dayKey = getDayKey(date)
+        const timeRange = bookingData.timeRanges[dayKey]
+        if (timeRange) {
+          const startHour = parseInt(timeRange.start.split(':')[0])
+          const endHour = parseInt(timeRange.end.split(':')[0])
+          times = generateTimeOptions(startHour, endHour)
         }
-        
-        if (bookingData?.timeRanges) {
-          const dayKey = getDayKey(date)
-          const timeRange = bookingData.timeRanges[dayKey]
-          if (timeRange) {
-            const startHour = parseInt(timeRange.start.split(':')[0])
-            const endHour = parseInt(timeRange.end.split(':')[0])
-            return generateTimeOptions(startHour, endHour)
-          }
-        }
-        return generateTimeOptions(9, 17) // Default: 09:00 to 17:00
-      })()
+      } else {
+        times = generateTimeOptions(9, 17) // Default: 09:00 to 17:00
+      }
+    }
+    
+    // Filter out booked times
+    return times.filter(time => !bookedTimes.includes(time))
+  })()
 
   // Generate time options within a range
   function generateTimeOptions(startHour: number, endHour: number): string[] {
@@ -123,7 +242,60 @@ export default function RoomBookingForm({
     for (let hour = startHour + 1; hour <= maxHour; hour++) {
       endTimes.push(formatTime(hour))
     }
-    return endTimes
+    
+    // Filter: end time must not overlap with booked periods
+    return endTimes.filter(time => {
+      const timeHour = getTimeKey(time)
+      for (const period of bookedPeriods) {
+        const bookedStart = getTimeKey(period.start)
+        if (timeHour > bookedStart) {
+          return false
+        }
+      }
+      return true
+    })
+  }
+
+  // Helper to get available end times for a specific start time
+  const getAvailableEndTimesForStartTime = (selectedStartTime: string): string[] => {
+    if (!selectedStartTime || !date) return []
+    
+    if (!isDateAvailable(date)) {
+      return []
+    }
+    
+    const startHour = getTimeKey(selectedStartTime)
+    let maxHour = Math.min(startHour + 4, 23)
+    
+    if (bookingData?.timeRanges) {
+      const dayKey = getDayKey(date)
+      const timeRange = bookingData.timeRanges[dayKey]
+      if (timeRange) {
+        const rangeEndHour = parseInt(timeRange.end.split(':')[0])
+        maxHour = Math.min(maxHour, rangeEndHour)
+      }
+    }
+    
+    const endTimes: string[] = []
+    for (let hour = startHour + 1; hour <= maxHour; hour++) {
+      endTimes.push(formatTime(hour))
+    }
+    
+    // NEW LOGIC: Only filter out times that conflict with booked periods
+    return endTimes.filter(time => {
+      const timeHour = getTimeKey(time)
+      // Check if this end time overlaps with any booked period
+      // Your booking would be [startHour, timeHour)
+      // It's OK to end at the time a booking starts (e.g., end at 10:00 if booking starts at 10:00)
+      for (const period of bookedPeriods) {
+        const bookedStart = getTimeKey(period.start)
+        // If your end time is AFTER the booking starts, there's a conflict
+        if (timeHour > bookedStart) {
+          return false // Block this end time
+        }
+      }
+      return true // Allow this end time
+    })
   }
 
   const handleAddMember = () => {
@@ -266,6 +438,7 @@ export default function RoomBookingForm({
                 value={date}
                 onChange={setDate}
                 usageDays={bookingData?.usageDays}
+                bookedDates={bookedDates}
               />
             </div>
           </div>
@@ -274,6 +447,15 @@ export default function RoomBookingForm({
           {date && !isDateAvailable(date) ? (
             <div className="w-full mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
               <p className="text-sm text-red-600">ห้องนี้ปิดในวันนี้ กรุณาเลือกวันอื่น</p>
+            </div>
+          ) : date && availableStartTimes.length === 0 ? (
+            <div className="w-full mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+              <p className="text-sm text-red-600">ไม่มีเวลาว่างในวันนี้ กรุณาเลือกวันอื่น</p>
+            </div>
+          ) : hasTimeConflict ? (
+            <div className="w-full mb-4 p-4 bg-yellow-50 border border-yellow-300 rounded-lg">
+              <p className="text-sm text-yellow-800 font-medium">⚠️ เวลาที่คุณเลือกขัดแย้งกับการจองอื่นแล้ว</p>
+              <p className="text-xs text-yellow-700 mt-1">กรุณาเลือกเวลาอื่น</p>
             </div>
           ) : (
             <>
@@ -285,11 +467,12 @@ export default function RoomBookingForm({
                   value={startTime}
                   onChange={(e) => {
                     setStartTime(e.target.value)
-                    // Auto-set end time to start + 1 hour
+                    // Auto-set end time to first available time after start
                     if (e.target.value) {
-                      const startHour = getTimeKey(e.target.value)
-                      const endHour = Math.min(startHour + 1, 23)
-                      setEndTime(formatTime(endHour))
+                      const availableEnds = getAvailableEndTimesForStartTime(e.target.value)
+                      if (availableEnds.length > 0) {
+                        setEndTime(availableEnds[0])
+                      }
                     }
                   }}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg text-sm focus:outline-none appearance-none bg-white"

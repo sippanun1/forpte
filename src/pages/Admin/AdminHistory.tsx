@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { collection, query, orderBy, getDocs, deleteDoc, doc } from 'firebase/firestore'
+import { collection, query, orderBy, getDocs, deleteDoc, doc, limit } from 'firebase/firestore'
 import { db } from '../../firebase/firebase'
 import { useNavigate } from 'react-router-dom'
 import Header from '../../components/Header'
@@ -19,6 +19,9 @@ export default function AdminHistory() {
   const navigate = useNavigate()
   const [actions, setActions] = useState<AdminAction[]>([])
   const [loading, setLoading] = useState(true)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [hasMore, setHasMore] = useState(true)
+  const PAGE_SIZE = 50
   const [selectedType, setSelectedType] = useState<'all' | 'equipment' | 'room'>('all')
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedAction, setSelectedAction] = useState<'all' | 'add' | 'edit' | 'update' | 'delete'>('all')
@@ -37,17 +40,21 @@ export default function AdminHistory() {
     const fetchAdminActions = async () => {
       try {
         const actionsRef = collection(db, 'adminLogs')
-        const q = query(actionsRef, orderBy('timestamp', 'desc'))
+        const q = query(actionsRef, orderBy('timestamp', 'desc'), limit(PAGE_SIZE + 1))
         const querySnapshot = await getDocs(q)
         
         const actionsList: AdminAction[] = []
-        querySnapshot.forEach((doc) => {
-          actionsList.push({
-            id: doc.id,
-            ...doc.data()
-          } as AdminAction)
+        querySnapshot.forEach((doc, index) => {
+          if (index < PAGE_SIZE) {
+            actionsList.push({
+              id: doc.id,
+              ...doc.data()
+            } as AdminAction)
+          }
         })
         
+        // Check if there are more records
+        setHasMore(querySnapshot.size > PAGE_SIZE)
         setActions(actionsList)
       } catch (error) {
         console.error('Error fetching admin actions:', error)

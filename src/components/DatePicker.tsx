@@ -5,9 +5,10 @@ interface DatePickerProps {
   onChange: (date: string) => void
   label?: string
   usageDays?: Record<string, boolean>
+  bookedDates?: string[] // New: dates that have bookings
 }
 
-export default function DatePicker({ value, onChange, label, usageDays }: DatePickerProps) {
+export default function DatePicker({ value, onChange, label, usageDays, bookedDates = [] }: DatePickerProps) {
   const [showCalendar, setShowCalendar] = useState(false)
   const [displayMonth, setDisplayMonth] = useState(new Date())
 
@@ -114,27 +115,33 @@ export default function DatePicker({ value, onChange, label, usageDays }: DatePi
       const isToday = new Date().toDateString() === dateObj.toDateString()
       const isPast = dateObj.getTime() < today.getTime()
       const isUnavailable = !isDateAvailable(dateObj)
+      const isBooked = bookedDates.includes(dateString) // Check if date has bookings
 
       days.push(
-        <button
-          key={day}
-          onClick={() => handleDateClick(day)}
-          disabled={isPast || isUnavailable}
-          className={`
-            w-full h-12 rounded flex items-center justify-center text-sm font-medium transition touch-manipulation
-            ${isSelected ? "bg-blue-500 text-white" : ""}
-            ${isToday && !isSelected ? "bg-blue-100 text-blue-600 font-bold" : ""}
-            ${!isSelected && !isToday && !isPast && !isUnavailable ? "text-gray-700 hover:bg-gray-100 active:bg-gray-200" : ""}
-            ${isPast || isUnavailable ? "text-gray-300 cursor-not-allowed" : ""}
-          `}
-          style={{
-            color: isSelected ? "white" : isToday ? "#2563eb" : isPast || isUnavailable ? "#ccc" : "#595959",
-            backgroundColor: isSelected ? "#3b82f6" : isToday ? "#dbeafe" : isPast || isUnavailable ? "transparent" : "transparent"
-          }}
-          title={isUnavailable ? "ห้องปิดในวันนี้" : ""}
-        >
-          {day}
-        </button>
+        <div key={day} className="relative">
+          <button
+            onClick={() => handleDateClick(day)}
+            disabled={isPast || isUnavailable}
+            className={`
+              w-full h-12 rounded flex items-center justify-center text-sm font-medium transition touch-manipulation relative
+              ${isSelected ? "bg-blue-500 text-white" : ""}
+              ${isToday && !isSelected ? "bg-blue-100 text-blue-600 font-bold" : ""}
+              ${!isSelected && !isToday && !isPast && !isUnavailable ? "text-gray-700 hover:bg-gray-100 active:bg-gray-200" : ""}
+              ${isPast || isUnavailable ? "text-gray-300 cursor-not-allowed" : ""}
+            `}
+            style={{
+              color: isSelected ? "white" : isToday ? "#2563eb" : isPast || isUnavailable ? "#ccc" : "#595959",
+              backgroundColor: isSelected ? "#3b82f6" : isToday ? "#dbeafe" : isPast || isUnavailable ? "transparent" : "transparent"
+            }}
+            title={isUnavailable ? "ห้องปิดในวันนี้" : isBooked ? "มีการบุกเข้า" : ""}
+          >
+            {day}
+            {/* Booking indicator dot */}
+            {isBooked && !isPast && (
+              <div className="absolute bottom-1 w-1.5 h-1.5 bg-orange-500 rounded-full" title="มีการจองในวันนี้" />
+            )}
+          </button>
+        </div>
       )
     }
 

@@ -5,6 +5,28 @@ import { collection, getDocs, query, where } from "firebase/firestore"
 import { auth, db } from "../../firebase/firebase"
 import Header from "../../components/Header"
 
+// Cache configuration
+interface CacheData {
+  data: any
+  timestamp: number
+}
+
+const dashboardCache: { lowStock?: CacheData; pendingBookings?: CacheData } = {}
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+const getCachedData = (key: 'lowStock' | 'pendingBookings'): any => {
+  const cached = dashboardCache[key]
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log(`Using cached ${key}`)
+    return cached.data
+  }
+  return null
+}
+
+const setCachedData = (key: 'lowStock' | 'pendingBookings', data: any) => {
+  dashboardCache[key] = { data, timestamp: Date.now() }
+}
+
 interface Equipment {
   id: string
   name: string
@@ -33,6 +55,13 @@ export default function AdminDashboard() {
   useEffect(() => {
     const loadLowStockItems = async () => {
       try {
+        // Check cache first
+        const cached = getCachedData('lowStock')
+        if (cached) {
+          setLowStockItems(cached)
+          return
+        }
+
         const q = query(collection(db, "equipment"), where("category", "==", "consumable"))
         const querySnapshot = await getDocs(q)
         const items: Equipment[] = []
@@ -48,6 +77,9 @@ export default function AdminDashboard() {
             })
           }
         })
+        
+        // Cache the results
+        setCachedData('lowStock', items)
         setLowStockItems(items)
       } catch (error) {
         console.error("Error loading low stock items:", error)
@@ -60,6 +92,13 @@ export default function AdminDashboard() {
   useEffect(() => {
     const loadPendingBookings = async () => {
       try {
+        // Check cache first
+        const cached = getCachedData('pendingBookings')
+        if (cached) {
+          setPendingBookings(cached)
+          return
+        }
+
         const q = query(collection(db, "roomBookings"), where("status", "==", "pending"))
         const querySnapshot = await getDocs(q)
         const bookings: RoomBooking[] = []
@@ -76,6 +115,9 @@ export default function AdminDashboard() {
             status: data.status || "pending"
           })
         })
+        
+        // Cache the results
+        setCachedData('pendingBookings', bookings)
         setPendingBookings(bookings)
       } catch (error) {
         console.error("Error loading pending bookings:", error)
