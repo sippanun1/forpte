@@ -212,7 +212,13 @@ export async function logReturnTransaction(
             ...originalItem
           }
           // Only add return-related fields if they have values
-          if (returnedItem.returnCondition) {
+          // For assets with assetCodeConditions, don't set a global returnCondition
+          if (returnedItem.assetCodeConditions && returnedItem.assetCodeConditions.length > 0) {
+            // Asset code conditions - IMPORTANT: Save per-code conditions
+            updatedItem.assetCodeConditions = returnedItem.assetCodeConditions
+            // Don't set returnCondition for assets - use assetCodeConditions instead
+          } else if (returnedItem.returnCondition) {
+            // Only set returnCondition for non-asset items or when no assetCodeConditions
             updatedItem.returnCondition = returnedItem.returnCondition
           }
           if (returnedItem.consumptionStatus) {
@@ -234,10 +240,6 @@ export async function logReturnTransaction(
           }
           if (returnedItem.returnLostQty !== undefined) {
             updatedItem.returnLostQty = returnedItem.returnLostQty
-          }
-          // Asset code conditions - IMPORTANT: Save per-code conditions
-          if (returnedItem.assetCodeConditions && returnedItem.assetCodeConditions.length > 0) {
-            updatedItem.assetCodeConditions = returnedItem.assetCodeConditions
           }
           return updatedItem
         }
@@ -285,6 +287,39 @@ export async function logReturnTransaction(
       returnTimestamp: Date.now(),
       equipmentItems: updatedEquipmentItems,
       returnedBy: returnedByName || returnedBy?.displayName || "System"
+    }
+    
+    // For assets returned in good condition, update the available count
+    if (returnedEquipmentItems && returnedEquipmentItems.length > 0) {
+      const batch = writeBatch(db)
+      
+      for (const item of returnedEquipmentItems) {
+        if (item.equipmentCategory === "asset" && item.assetCodeConditions && item.assetCodeConditions.length > 0) {
+          // Count how many assets are being returned in good condition
+          const goodConditionCodes = item.assetCodeConditions.filter(c => c.condition === "ปกติ").length
+          
+          if (goodConditionCodes > 0) {
+            try {
+              // Find equipment by name and increment available count
+              const q = query(collection(db, "equipmentMaster"), where("name", "==", item.equipmentName))
+              const snapshot = await getDocs(q)
+              
+              snapshot.forEach((docSnap) => {
+                const currentAvailable = docSnap.data().available || 0
+                const newAvailable = currentAvailable + goodConditionCodes
+                
+                batch.update(doc(db, "equipmentMaster", docSnap.id), {
+                  available: newAvailable
+                })
+              })
+            } catch (error) {
+              console.error(`Error updating available count for ${item.equipmentName}:`, error)
+            }
+          }
+        }
+      }
+      
+      await batch.commit()
     }
     
     // Only add optional fields if they have values

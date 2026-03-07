@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { collection, getDocs, query, where, updateDoc, doc } from "firebase/firestore"
+import { collection, getDocs, query, where, updateDoc, doc, getDoc } from "firebase/firestore"
 import { db } from "../../firebase/firebase"
 import Header from "../../components/Header"
 import { findAssetInstanceBySerialCode, updateAssetInstanceCondition } from "../../utils/equipmentHelper"
@@ -11,6 +11,7 @@ interface EquipmentConditionData {
   equipmentId: string
   condition: string
   assetCodes: string[]
+  assetCodeConditions: Array<{ code: string; condition: string; notes: string }>
   notes: string[]
   borrowIds: string[]
   borrowerNames: string[]
@@ -48,15 +49,25 @@ export default function EquipmentConditionReport() {
           
           // Process each equipment item in the transaction
           txn.equipmentItems?.forEach((item, itemIndex) => {
-            if (item.returnCondition && item.returnCondition !== "ปกติ") {
-              const key = `${item.equipmentName}-${item.returnCondition}`
+            // Handle both returnCondition (for consumables) and assetCodeConditions (for assets)
+            const hasAssetIssues = item.assetCodeConditions && item.assetCodeConditions.some(ac => ac.condition !== "ปกติ")
+            const hasReturnIssue = item.returnCondition && item.returnCondition !== "ปกติ"
+            
+            if (hasAssetIssues || hasReturnIssue) {
+              // For assets with assetCodeConditions, group by first code's condition (or primary condition)
+              const primaryCondition = hasAssetIssues 
+                ? item.assetCodeConditions?.[0]?.condition || item.returnCondition || "ปกติ"
+                : item.returnCondition || "ปกติ"
+              
+              const key = `${item.equipmentName}-${primaryCondition}`
               
               if (!conditionMap.has(key)) {
                 conditionMap.set(key, {
                   equipmentName: item.equipmentName,
                   equipmentId: item.equipmentId || "",
-                  condition: item.returnCondition,
+                  condition: primaryCondition,
                   assetCodes: [],
+                  assetCodeConditions: [],
                   notes: [],
                   borrowIds: [],
                   borrowerNames: [],
@@ -70,11 +81,21 @@ export default function EquipmentConditionReport() {
               if (item.assetCodeConditions && item.assetCodeConditions.length > 0) {
                 item.assetCodeConditions.forEach(ac => {
                   data.assetCodes.push(ac.code)
+                  data.assetCodeConditions.push({
+                    code: ac.code,
+                    condition: ac.condition,
+                    notes: ac.notes || ""
+                  })
                   data.notes.push(ac.notes || item.returnNotes || "")
                 })
               } else if (item.assetCodes && item.assetCodes.length > 0) {
                 item.assetCodes.forEach(code => {
                   data.assetCodes.push(code)
+                  data.assetCodeConditions.push({
+                    code: code,
+                    condition: item.returnCondition || "ปกติ",
+                    notes: item.returnNotes || ""
+                  })
                   data.notes.push(item.returnNotes || "")
                 })
               }
@@ -144,8 +165,14 @@ export default function EquipmentConditionReport() {
     if (selectedEquipment) {
       setEditingItemIndex(itemIndex)
       setIsEditing(true)
-      setNewCondition(selectedEquipment.condition)
-      setNewNotes(selectedEquipment.notes[itemIndex] || '')
+      // Use individual assetCodeCondition if available
+      if (selectedEquipment.assetCodeConditions && selectedEquipment.assetCodeConditions[itemIndex]) {
+        setNewCondition(selectedEquipment.assetCodeConditions[itemIndex].condition)
+        setNewNotes(selectedEquipment.assetCodeConditions[itemIndex].notes || '')
+      } else {
+        setNewCondition(selectedEquipment.condition)
+        setNewNotes(selectedEquipment.notes[itemIndex] || '')
+      }
     }
   }
 
@@ -160,26 +187,35 @@ export default function EquipmentConditionReport() {
       
       const docRef = doc(db, "borrowHistory", docId)
       
-      // Get the current document to preserve other data
-      const querySnapshot = await getDocs(query(collection(db, "borrowHistory")))
-      let foundDoc = null
+      // Fetch only the specific document we need
+      const borrowDoc = await getDoc(docRef)
       
-      for (const docSnap of querySnapshot.docs) {
-        if (docSnap.id === docId) {
-          foundDoc = docSnap
-          break
-        }
-      }
-      
-      if (foundDoc) {
-        const txnData = foundDoc.data() as BorrowTransaction
+      if (borrowDoc.exists()) {
+        const txnData = borrowDoc.data() as BorrowTransaction
         const updatedItems = [...txnData.equipmentItems]
-        updatedItems[itemIndex] = {
-          ...updatedItems[itemIndex],
-          returnCondition: newCondition,
-          returnNotes: newNotes
+        const itemToUpdate = updatedItems[itemIndex]
+        
+        // For assets with assetCodeConditions, update individual codes instead of global returnCondition
+        if (itemToUpdate.assetCodeConditions && itemToUpdate.assetCodeConditions.length > 0) {
+          // Update the specific asset code condition
+          const updatedAssetCodeConditions = [...itemToUpdate.assetCodeConditions]
+          // Find the index of this serial code in the assetCodeConditions array
+          const codeIndex = updatedAssetCodeConditions.findIndex(ac => ac.code === serialCode)
+          if (codeIndex !== -1) {
+            updatedAssetCodeConditions[codeIndex] = {
+              code: serialCode,
+              condition: newCondition as "ปกติ" | "ชำรุด" | "สูญหาย",
+              notes: newNotes
+            }
+            itemToUpdate.assetCodeConditions = updatedAssetCodeConditions
+          }
+        } else {
+          // For consumables or assets without assetCodeConditions, set returnCondition
+          itemToUpdate.returnCondition = newCondition
+          itemToUpdate.returnNotes = newNotes
         }
         
+        updatedItems[itemIndex] = itemToUpdate
         await updateDoc(docRef, { equipmentItems: updatedItems })
         
         // If condition changed, update the asset instance in assetInstances collection
@@ -200,11 +236,24 @@ export default function EquipmentConditionReport() {
         // Update local state
         const updated = selectedEquipment.notes.slice()
         updated[editingItemIndex] = newNotes
+        const updatedAssetCodeConditions = selectedEquipment.assetCodeConditions?.map((acc, idx) =>
+          idx === editingItemIndex
+            ? { ...acc, condition: newCondition, notes: newNotes }
+            : acc
+        ) || []
         setSelectedEquipment({
           ...selectedEquipment,
           condition: newCondition,
-          notes: updated
+          notes: updated,
+          assetCodeConditions: updatedAssetCodeConditions
         })
+        
+        // Refresh the main equipment list to reflect changes
+        setEquipmentConditions(equipmentConditions.map(eq =>
+          eq.equipmentId === selectedEquipment.equipmentId
+            ? { ...eq, assetCodeConditions: updatedAssetCodeConditions, condition: newCondition, notes: updated }
+            : eq
+        ))
         
         setIsEditing(false)
         setEditingItemIndex(null)
@@ -456,8 +505,20 @@ export default function EquipmentConditionReport() {
                         : 'bg-gray-50 border-gray-200'
                     }`}
                   >
-                    <p className="text-sm font-mono font-semibold text-gray-800">{code}</p>
-                    <p className="text-xs text-gray-600 mt-1">ผู้ยืม: {selectedEquipment.borrowerNames[idx]}</p>
+                    <div className="flex justify-between items-start gap-2">
+                      <div>
+                        <p className="text-sm font-mono font-semibold text-gray-800">{code}</p>
+                        <p className="text-xs text-gray-600 mt-1">ผู้ยืม: {selectedEquipment.borrowerNames[idx]}</p>
+                        {/* Display individual condition badge */}
+                        {selectedEquipment.assetCodeConditions[idx] && (
+                          <div className="mt-2 flex items-center gap-2">
+                            <span className={`${getConditionBadgeColor(selectedEquipment.assetCodeConditions[idx].condition)} text-xs font-bold px-2 py-1 rounded`}>
+                              {selectedEquipment.assetCodeConditions[idx].condition}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     
                     {/* Edit Section */}
                     {isEditing && editingItemIndex === idx ? (

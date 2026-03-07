@@ -178,6 +178,19 @@ export default function ConfirmSummary({ cartItems }: ConfirmSummaryProps) {
               available: newQty > 0 // Mark as unavailable if quantity reaches 0
             })
           })
+        } else if (item.category === "asset") {
+          // For assets: update available count in equipment/equipmentMaster collection
+          const q = query(collection(db, "equipmentMaster"), where("name", "==", item.name))
+          const snapshot = await getDocs(q)
+          
+          snapshot.forEach((docSnap) => {
+            const currentAvailable = docSnap.data().available || 0
+            const newAvailable = Math.max(0, currentAvailable - item.selectedQuantity)
+            
+            batch.update(doc(db, "equipmentMaster", docSnap.id), {
+              available: newAvailable
+            })
+          })
         }
       }
       
